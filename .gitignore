@@ -13,3 +13,6 @@ data/
 node_modules/
 web/dist/
 .env
+
+# DuckDB spill files
+.tmp/

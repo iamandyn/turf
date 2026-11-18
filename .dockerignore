@@ -1,0 +1,11 @@
+.git
+.venv
+.tmp
+data
+deploy/data
+web/node_modules
+**/__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache
+*.duckdb

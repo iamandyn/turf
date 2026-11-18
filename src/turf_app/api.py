@@ -86,7 +86,16 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        con = duckdb.connect(str(path), read_only=True)
+        # Each uvicorn worker opens its own connection; cap DuckDB so two
+        # workers fit inside the container's memory limit.
+        con = duckdb.connect(
+            str(path),
+            read_only=True,
+            config={
+                "memory_limit": os.environ.get("TURF_DB_MEMORY", "1GB"),
+                "threads": int(os.environ.get("TURF_DB_THREADS", "2")),
+            },
+        )
         app.state.db = con
         try:
             yield

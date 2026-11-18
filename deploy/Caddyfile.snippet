@@ -1,0 +1,5 @@
+# Add to the server's Caddyfile (replace the domain), then `caddy validate` and reload.
+turf.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8090
+}

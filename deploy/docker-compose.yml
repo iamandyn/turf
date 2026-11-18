@@ -1,0 +1,22 @@
+# Runs on the server from ~/turf. The API listens on localhost only;
+# Caddy (already on the host) terminates TLS and proxies to it.
+services:
+  turf:
+    build:
+      context: ..
+    image: turf:latest
+    container_name: turf
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8000"
+    volumes:
+      # Points at the current release's data; see deploy/README.md.
+      - ./data/current:/data:ro
+    # Keep Turf from crowding out the other sites on this box.
+    mem_limit: 4g
+    cpus: 2
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

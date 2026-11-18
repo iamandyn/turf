@@ -16,9 +16,18 @@ from typing import Annotated
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from turf_app.normalize import normalize_text
+from turf_app.targets import (
+    ExportFormat,
+    TargetRequest,
+    TargetResponse,
+    UnknownChainError,
+    build_targets,
+    to_csv,
+)
 
 # Similarity needed for a fuzzy (typo) match, e.g. "starbuks" -> "starbucks".
 FUZZY_MIN_SIMILARITY = 0.88
@@ -179,6 +188,31 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             ),
             include_unverified=include_unverified,
             locations=[Location(**dict(zip(fields, r, strict=True))) for r in rows],
+        )
+
+    def _targets_or_404(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetResponse:
+        try:
+            return build_targets(db, req)
+        except UnknownChainError as e:
+            raise HTTPException(status_code=404, detail=f"Unknown chain: {e}") from e
+
+    @app.post("/api/targets")
+    def targets(db: Db, req: TargetRequest) -> TargetResponse:
+        return _targets_or_404(db, req)
+
+    @app.post("/api/targets/export")
+    def export_targets(
+        db: Db, req: TargetRequest, format: ExportFormat = ExportFormat.generic
+    ) -> Response:
+        result = _targets_or_404(db, req)
+        campaign = req.campaign_name or f"Turf - {req.chain_key}"
+        slug = req.chain_key.replace(" ", "-")
+        return Response(
+            content=to_csv(result, format, campaign),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="turf-{slug}-{format.value}.csv"'
+            },
         )
 
     return app

@@ -1,6 +1,7 @@
-"""Step 2: assign places to chains, flag duplicates, and normalize states.
+"""Step 2: assign places to chains, flag duplicates, and fill in states.
 
-Reads data/<release>/us_places.parquet (from extract_us.py) and writes
+Reads data/<release>/us_places.parquet (from extract_us.py) and
+us_states.parquet (from extract_states.py), and writes
 places.parquet, chains.parquet, and chains_manifest.json next to it.
 
 Usage:
@@ -12,11 +13,13 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import duckdb
 
 from turf_app.chains import ChainRules, build
+from turf_app.states import fill_states
 
 SPOT_CHECK_CHAINS = [
     "orangetheory fitness",
@@ -42,6 +45,10 @@ def main() -> None:
 
     started = time.monotonic()
     build(con, ChainRules())
+    con.execute("INSTALL spatial; LOAD spatial;")
+    states_file = release_dir / "us_states.parquet"
+    con.execute(f"CREATE TABLE us_states AS SELECT * FROM read_parquet('{states_file}')")
+    state_report = fill_states(con)
     elapsed = time.monotonic() - started
 
     con.execute(
@@ -88,6 +95,7 @@ def main() -> None:
         "duplicates": totals[4],
         "with_state": totals[5],
         "chains": n_chains[0],
+        "state_fill": asdict(state_report),
         "spot_checks": spot,
         "build_seconds": round(elapsed, 1),
     }

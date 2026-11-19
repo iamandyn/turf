@@ -1,4 +1,12 @@
-"""Shared fixture: a small serving database built with the real builder, and an API client."""
+"""Shared fixture: a small serving database built with the real builder, and an API client.
+
+Twelve synthetic metro areas sit side by side as 1°x1° boxes along latitude 35.
+Metro ``i`` (codes 10000-10011) has 100 open restaurants plus ``i`` pet
+groomers and ``12 - i`` dog parks, so pet-groomer share rises with ``i`` and
+dog-park share falls: rankings are predictable. Metro 10011 is a micro area.
+Every preset category appears once, in the micro area (outside the default
+universe, so it doesn't skew rankings), so the presets load.
+"""
 
 from __future__ import annotations
 
@@ -10,115 +18,94 @@ import pytest
 from fastapi.testclient import TestClient
 
 from turf_app.api import create_app
+from turf_app.markets import PRESETS
 from turf_app.ratelimit import RateLimiter
 from turf_app.serving import write_serving_db
 
-PLACES = [
-    # id, name, chain_key, category, confidence, status, state, lat, lon, is_duplicate
-    ("sb1", "Starbucks", "starbucks", "coffee_shop", 0.99, "open", "TX", 30.27, -97.74, False),
-    ("sb2", "Starbucks Coffee Company", "starbucks", "coffee_shop", 0.9, "open", "CA", 37.7, -122.4, False),
-    ("sb3", "Starbucks", "starbucks", "coffee_shop", 0.8, None, "TX", 30.3, -97.7, False),
-    ("sb4", "Starbucks", "starbucks", "coffee_shop", 0.7, "open", "TX", 30.31, -97.71, True),
-    ("otf1", "Orangetheory Fitness", "orangetheory fitness", "gym", 0.99, "open", "TX", 30.2, -97.8, False),
-    ("otf2", "Orangetheory Fitness", "orangetheory fitness", "gym", 0.99, "open", "CA", 34.0, -118.2, False),
-    ("ot1", "Orangetheory", "orangetheory", "gym", 0.9, "open", "TX", 30.5, -97.9, False),
-    ("pf1", "Planet Fitness", "planet fitness", "gym", 0.99, "open", "TX", 30.4, -97.7, False),
-    ("ss1", "Starship Bagel", "starship bagel", "bakery", 0.9, "open", "TX", 30.1, -97.6, False),
-    ("x1", "Old Shop", "old shop", "retail", 0.9, None, "TX", 30.0, -97.0, False),
-    # "Your own" chain for exclusion tests. sb1 is ~0.35 mi from dk1; sb3 is
-    # ~0.6 mi from dk2, which is unverified; sb2 is ~7 mi from dk3.
-    ("dk1", "Dunkin'", "dunkin", "coffee_shop", 0.99, "open", "TX", 30.275, -97.74, False),
-    ("dk2", "Dunkin'", "dunkin", "coffee_shop", 0.9, None, "TX", 30.3, -97.71, False),
-    ("dk3", "Dunkin'", "dunkin", "coffee_shop", 0.9, "open", "CA", 37.8, -122.4, False),
-    ("ind", "Joe's Coffee", None, "coffee_shop", 0.9, "open", "TX", 30.0, -97.5, False),
-]  # fmt: skip
+N_METROS = 12
 
-# Two boxes standing in for Census metro areas: Austin (sb1, sb3, otf1, ... are
-# inside) and San Francisco (sb2, dk3). otf2 (Los Angeles) and x1 (30.0, -97.0)
-# are in neither.
-METROS = [
-    ("12420", "Austin-Round Rock-San Marcos, TX", "metro", "austin round rock san marcos tx",
-     "POLYGON((-98.2 29.9, -97.3 29.9, -97.3 30.6, -98.2 30.6, -98.2 29.9))"),
-    ("41860", "San Francisco-Oakland-Fremont, CA", "metro", "san francisco oakland fremont ca",
-     "POLYGON((-122.6 37.5, -122.0 37.5, -122.0 38.0, -122.6 38.0, -122.6 37.5))"),
-    ("99999", "Empty Micro, TX", "micro", "empty micro tx",
-     "POLYGON((-100 40, -99 40, -99 41, -100 41, -100 40))"),
-]  # fmt: skip
 
-CHAINS = [
-    ("starbucks", "Starbucks", ["coffee_shop"]),
-    ("orangetheory fitness", "Orangetheory Fitness", ["gym"]),
-    ("orangetheory", "Orangetheory", ["gym"]),
-    ("planet fitness", "Planet Fitness", ["gym"]),
-    ("starship bagel", "Starship Bagel", ["bakery"]),
-    ("dunkin", "Dunkin'", ["coffee_shop"]),
-    ("old shop", "Old Shop", ["retail"]),  # no open locations -> not served
-]
+def metro_code(i: int) -> str:
+    return str(10000 + i)
+
+
+def _metros() -> list[tuple[object, ...]]:
+    rows: list[tuple[object, ...]] = []
+    for i in range(N_METROS):
+        lon = -100 + 2 * i
+        kind = "micro" if i == N_METROS - 1 else "metro"
+        population = 300_000 + 100_000 * i  # 300k .. 1.4M
+        population_2020 = int(population / (1 + i / 100))  # growth rises with i: 0% .. 11%
+        rows.append(
+            (
+                metro_code(i), f"Metro {i}, ST", kind, f"metro {i} st", population,
+                population_2020,
+                f"POLYGON(({lon} 35, {lon + 1} 35, {lon + 1} 36, {lon} 36, {lon} 35))",
+            )
+        )  # fmt: skip
+    rows[3] = (*rows[3][:1], "Austin-Round Rock-San Marcos, TX", "metro",
+               "austin round rock san marcos tx", *rows[3][4:])  # fmt: skip
+    return rows
+
+
+def _places() -> list[tuple[object, ...]]:
+    # id, basic_category, taxonomy_primary, operating_status, postcode, lat, lon, is_duplicate
+    rows: list[tuple[object, ...]] = []
+
+    def add(i: int, category: str, n: int, status: str | None = "open", dup: bool = False) -> None:
+        for k in range(n):
+            lon = -100 + 2 * i + 0.2 + (k % 5) * 0.15  # spread inside the box
+            # Three ZIPs per metro, all with at least 5 places.
+            postcode = f"{70000 + 10 * i + k % 3}-1234"
+            rows.append((f"{category}-{i}-{k}-{status}-{dup}", "x", category, status, postcode,
+                         35.5 + (k % 3) * 0.1, lon, dup))  # fmt: skip
+
+    for i in range(N_METROS):
+        add(i, "restaurant", 100)
+        add(i, "pet_groomer", i)
+        add(i, "dog_park", N_METROS - i)
+        add(i, "pet_groomer", 50, dup=True)  # duplicates never count
+        add(i, "pet_groomer", 50, status=None)  # unverified: not open, not counted
+    for preset in PRESETS.values():
+        for category in preset.categories:
+            if category not in ("pet_groomer", "dog_park"):
+                add(N_METROS - 1, category, 1)
+    # A stray ZIP: one place of metro 1 carries metro 0's ZIP; it must stay with metro 0.
+    rows.append(("stray", "x", "restaurant", "open", "70000", 35.5, -100 + 2 * 1 + 0.5, False))
+    # A ZIP with too few places in its metro to be exported.
+    rows.append(("tiny", "x", "restaurant", "open", "79999", 35.5, -100 + 0.5, False))
+    # Outside every metro: counted nowhere.
+    rows.append(("rural", "x", "pet_groomer", "open", "80000", 45.0, -100.0, False))
+    return rows
 
 
 @pytest.fixture(scope="session")
 def serving_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     d = tmp_path_factory.mktemp("serving")
     con = duckdb.connect()
-    con.execute(
-        "CREATE TABLE p (id VARCHAR, name VARCHAR, chain_key VARCHAR, basic_category VARCHAR, "
-        "confidence DOUBLE, operating_status VARCHAR, state VARCHAR, lat DOUBLE, lon DOUBLE, "
-        "is_duplicate BOOLEAN)"
-    )
-    con.executemany("INSERT INTO p VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", PLACES)
-    con.execute(f"""
-        COPY (SELECT *, basic_category AS taxonomy_primary, id || ' Main St' AS address, 'Austin' AS locality, '78701' AS postcode FROM p)
-        TO '{d / "places.parquet"}' (FORMAT parquet)
-    """)
-    con.execute("CREATE TABLE c (chain_key VARCHAR, display_name VARCHAR, categories VARCHAR[])")
-    con.executemany("INSERT INTO c VALUES (?, ?, ?)", CHAINS)
-    con.execute(f"COPY c TO '{d / 'chains.parquet'}' (FORMAT parquet)")
     con.execute("INSTALL spatial; LOAD spatial;")
     con.execute(
-        "CREATE TABLE m (code VARCHAR, name VARCHAR, kind VARCHAR, search_key VARCHAR, wkt VARCHAR)"
+        "CREATE TABLE p (id VARCHAR, basic_category VARCHAR, taxonomy_primary VARCHAR, "
+        "operating_status VARCHAR, postcode VARCHAR, lat DOUBLE, lon DOUBLE, is_duplicate BOOLEAN)"
     )
-    con.executemany("INSERT INTO m VALUES (?, ?, ?, ?, ?)", METROS)
+    con.executemany("INSERT INTO p VALUES (?, ?, ?, ?, ?, ?, ?, ?)", _places())
+    con.execute(f"COPY p TO '{d / 'places.parquet'}' (FORMAT parquet)")
+    con.execute(
+        "CREATE TABLE m (code VARCHAR, name VARCHAR, kind VARCHAR, search_key VARCHAR, "
+        "population BIGINT, population_2020 BIGINT, wkt VARCHAR)"
+    )
+    con.executemany("INSERT INTO m VALUES (?, ?, ?, ?, ?, ?, ?)", _metros())
     con.execute(f"""
-        COPY (SELECT code, name, kind, search_key, ST_GeomFromText(wkt) AS geometry FROM m)
+        COPY (SELECT * EXCLUDE (wkt), ST_GeomFromText(wkt) AS geometry FROM m)
         TO '{d / "metros.parquet"}' (FORMAT parquet)
     """)
     db = d / "turf.duckdb"
-    write_serving_db(
-        d / "places.parquet", d / "chains.parquet", d / "metros.parquet", db, "test-release"
-    )
-    # The same data with a change view against a previous release.
-    con.execute("""
-        CREATE TABLE ch AS
-        SELECT * FROM (VALUES
-            ('new', 'sb1', 'Starbucks', 'starbucks', 'open', 'sb1 Main St', 'Austin', 'TX', '78701', 30.27, -97.74),
-            ('new', 'otf2', 'Orangetheory Fitness', 'orangetheory fitness', 'open', 'otf2 Main St', 'Austin', 'CA', '78701', 34.0, -118.2),
-            ('gone', 'old-sb', 'Starbucks', 'starbucks', 'open', '1 Old Rd', 'Austin', 'TX', '78701', 30.25, -97.75),
-            ('gone', 'old-sb-ca', 'Starbucks', 'starbucks', 'open', '2 Old Rd', 'Oakland', 'CA', '94601', 37.8, -122.27)
-        ) t(change, id, name, chain_key, status, address, locality, state, postcode, lat, lon)
-    """)
-    con.execute(f"COPY ch TO '{d / 'changes.parquet'}' (FORMAT parquet)")
-    write_serving_db(
-        d / "places.parquet",
-        d / "chains.parquet",
-        d / "metros.parquet",
-        d / "turf_changes.duckdb",
-        "test-release",
-        changes=d / "changes.parquet",
-        previous_release="prev-release",
-    )
+    write_serving_db(d / "places.parquet", d / "metros.parquet", db, "test-release")
     return db
 
 
 @pytest.fixture(scope="session")
 def client(serving_db: Path) -> Iterator[TestClient]:
-    # Rate limiting off here; it has its own tests. This file has no change
-    # view, like serving files built before it existed.
+    # Rate limiting off here; it has its own tests.
     with TestClient(create_app(serving_db, rate_limiter=RateLimiter(rules=()))) as c:
-        yield c
-
-
-@pytest.fixture(scope="session")
-def changes_client(serving_db: Path) -> Iterator[TestClient]:
-    db = serving_db.with_name("turf_changes.duckdb")
-    with TestClient(create_app(db, rate_limiter=RateLimiter(rules=()))) as c:
         yield c

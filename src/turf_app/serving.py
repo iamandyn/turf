@@ -1,8 +1,10 @@
 """Build the read-only DuckDB file the API serves.
 
-Only unique locations (duplicates removed) are kept, and the file is written
-to a temporary path and then renamed, so the API never opens a half-written
-database.
+Market selection works on per-metro aggregates, so the served file holds no
+individual places: it's a few megabytes, built from the 18M-place pipeline
+output. Only unique places (duplicates removed) are counted, and the file is
+written to a temporary path and then renamed, so the API never opens a
+half-written database.
 """
 
 from __future__ import annotations
@@ -11,41 +13,36 @@ from pathlib import Path
 
 import duckdb
 
-SCHEMA_VERSION = 4
-# 2: places.category + categories table; 3: places.metro + metros table;
-# 4: places.is_new + gone_locations + meta.previous_release (when built with changes)
+SCHEMA_VERSION = 5
+# 2: places.category + categories; 3: places.metro + metros; 4: change view;
+# 5: market selection: per-metro aggregates (metro_category, metro_zips,
+#    population), no places table.
+
+# A ZIP is exported for the metro that holds most of its places, and only if
+# it has at least this many there (stray or mistyped postcodes otherwise add
+# far-away ZIPs to a metro's list).
+MIN_PLACES_PER_ZIP = 5
 
 
 def write_serving_db(
-    places: Path,
-    chains: Path,
-    metros: Path,
-    out: Path,
-    release: str,
-    memory_limit: str = "4GB",
-    changes: Path | None = None,
-    previous_release: str | None = None,
+    places: Path, metros: Path, out: Path, release: str, memory_limit: str = "4GB"
 ) -> None:
-    """Write the serving file. ``changes`` (from build_changes.py) adds the
-    new/gone view against ``previous_release``; without it, the API hides that view."""
-    if (changes is None) != (previous_release is None):
-        raise ValueError("changes and previous_release go together")
     tmp = out.with_name(out.name + ".building")
     tmp.unlink(missing_ok=True)
     # Without a limit DuckDB takes up to 80% of RAM; above the limit it spills to disk.
     con = duckdb.connect(str(tmp), config={"memory_limit": memory_limit})
     try:
         # Spatial is only needed here, to tag places with their metro; the
-        # served file stores plain codes, so the API doesn't load it.
+        # served file has no geometry, so the API doesn't load it.
         con.execute("INSTALL spatial; LOAD spatial;")
         con.execute("CREATE TEMP TABLE metro_areas AS SELECT * FROM read_parquet(?)", [str(metros)])
-        # Only the served columns: the parquet has wide list columns that
+        # Only the columns used here: the parquet has wide list columns that
         # would otherwise all be held in memory.
         con.execute(
             """
             CREATE TEMP TABLE unique_places AS
-            SELECT id, name, chain_key, basic_category, taxonomy_primary, confidence,
-                   operating_status, address, locality, state, postcode, lat, lon
+            SELECT id, basic_category, taxonomy_primary AS category,
+                   operating_status AS status, postcode, lat, lon
             FROM read_parquet(?) WHERE NOT is_duplicate
             """,
             [str(places)],
@@ -54,60 +51,40 @@ def write_serving_db(
         # 18M points); a LEFT JOIN falls back to a nested loop. CBSAs don't
         # overlap, so each place gets at most one metro.
         con.execute("""
-            CREATE TEMP TABLE place_metro AS
-            SELECT p.id, m.code AS metro
+            CREATE TEMP TABLE metro_places AS
+            SELECT p.*, m.code AS metro
             FROM unique_places p
             JOIN metro_areas m ON ST_Contains(m.geometry, ST_Point(p.lon, p.lat))
         """)
-        if changes is not None:
-            con.execute(
-                "CREATE TEMP TABLE changes AS SELECT * FROM read_parquet(?)", [str(changes)]
-            )
-        # Sorted by chain so a chain's locations sit together on disk and
-        # DuckDB can skip everything else when looking one up.
-        # New since the previous release (chain locations only, see changes.py).
-        is_new = (
-            ", p.id IN (SELECT id FROM changes WHERE change = 'new') AS is_new"
-            if changes is not None
-            else ""
-        )
-        con.execute(f"""
-            CREATE TABLE places AS
-            SELECT p.id, p.name, p.chain_key, p.basic_category,
-                   p.taxonomy_primary AS category, p.confidence,
-                   p.operating_status AS status,
-                   p.address, p.locality, p.state, p.postcode, p.lat, p.lon,
-                   pm.metro {is_new}
-            FROM unique_places p LEFT JOIN place_metro pm USING (id)
-            ORDER BY p.chain_key, p.state
-        """)
-        # Metro areas with at least one place, for search and the filter.
-        # Bounds are the places' extent, so the map can frame a metro.
+        # Metro areas: population from the Census, place totals, and the
+        # places' center and extent to draw and frame each one on the map.
         con.execute("""
             CREATE TABLE metros AS
             SELECT m.code AS metro_code, m.name, m.kind, m.search_key,
-                   count(*) AS n_total,
-                   count(*) FILTER (WHERE p.status = 'open') AS n_open,
+                   m.population, m.population_2020,
+                   round(100.0 * (m.population - m.population_2020) / m.population_2020, 2)
+                       AS growth_pct,
+                   count(p.id) AS n_places,
+                   count(p.id) FILTER (WHERE p.status = 'open') AS n_open,
+                   avg(p.lat) AS center_lat, avg(p.lon) AS center_lon,
                    min(p.lat) AS min_lat, min(p.lon) AS min_lon,
                    max(p.lat) AS max_lat, max(p.lon) AS max_lon
-            FROM metro_areas m JOIN places p ON p.metro = m.code
+            FROM metro_areas m JOIN metro_places p ON p.metro = m.code
             GROUP BY ALL
+            ORDER BY metro_code
         """)
-        con.execute(
-            """
-            CREATE TABLE chains AS
-            SELECT c.chain_key, c.display_name, c.categories,
-                   count(p.id) AS n_total,
-                   count(p.id) FILTER (WHERE p.status = 'open') AS n_open
-            FROM read_parquet(?) c
-            JOIN places p USING (chain_key)
+        # Open places per metro and Overture category: the raw material for
+        # every signal (rates per 100k residents are computed at query time).
+        con.execute("""
+            CREATE TABLE metro_category AS
+            SELECT metro AS metro_code, category, count(*) AS n_open
+            FROM metro_places
+            WHERE status = 'open' AND category IS NOT NULL
             GROUP BY ALL
-            HAVING n_open >= 1
-            """,
-            [str(chains)],
-        )
-        # Fine-grained Overture categories (e.g. pet_groomer), for targeting
-        # every business of a kind, chains and independents alike.
+            ORDER BY category, metro_code
+        """)
+        # Fine-grained Overture categories (e.g. pet_groomer) that can be used
+        # as signals, for search. Counted nationwide.
         con.execute("""
             CREATE TABLE categories AS
             SELECT category AS category_key,
@@ -117,27 +94,32 @@ def write_serving_db(
                    mode(basic_category) AS parent,
                    count(*) AS n_total,
                    count(*) FILTER (WHERE status = 'open') AS n_open
-            FROM places
+            FROM unique_places
             WHERE category IS NOT NULL
             GROUP BY category
             HAVING n_open >= 1
         """)
-        if changes is not None:
-            # Chain locations in the previous release with no match now, tagged
-            # with their metro so area filters apply to them too.
-            con.execute("""
-                CREATE TABLE gone_locations AS
-                SELECT g.id, g.name, g.chain_key, g.address, g.locality, g.state, g.postcode,
-                       g.lat, g.lon, m.code AS metro
-                FROM changes g
-                LEFT JOIN metro_areas m ON ST_Contains(m.geometry, ST_Point(g.lon, g.lat))
-                WHERE g.change = 'gone'
-                ORDER BY g.chain_key, g.state
-            """)
+        # ZIP codes per metro, for ad platforms (Meta and Google both take US
+        # ZIPs; neither targets Census metro areas directly). Each ZIP goes to
+        # the metro holding most of its places.
+        con.execute(f"""
+            CREATE TABLE metro_zips AS
+            WITH counts AS (
+                SELECT left(postcode, 5) AS zip, metro, count(*) AS n_places
+                FROM metro_places
+                WHERE regexp_full_match(left(postcode, 5), '[0-9]{{5}}')
+                GROUP BY ALL
+            )
+            SELECT metro AS metro_code, zip, n_places
+            FROM counts
+            QUALIFY row_number() OVER (PARTITION BY zip ORDER BY n_places DESC, metro) = 1
+                AND n_places >= {MIN_PLACES_PER_ZIP}
+            ORDER BY metro_code, zip
+        """)
         con.execute(
             "CREATE TABLE meta AS SELECT ?::VARCHAR AS release, ?::INT AS schema_version, "
-            "(now() AT TIME ZONE 'UTC') AS built_at_utc, ?::VARCHAR AS previous_release",
-            [release, SCHEMA_VERSION, previous_release],
+            "(now() AT TIME ZONE 'UTC') AS built_at_utc",
+            [release, SCHEMA_VERSION],
         )
         con.execute("CHECKPOINT")
     finally:

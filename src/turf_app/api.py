@@ -1,4 +1,4 @@
-"""Turf HTTP API.
+"""Turf HTTP API: market selection for consumer brands.
 
 Run locally:
     TURF_DB=data/2026-11-18.0/turf.duckdb uv run uvicorn turf_app.api:app --reload
@@ -6,7 +6,9 @@ Run locally:
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import os
 import re
 from collections.abc import AsyncIterator, Iterator
@@ -23,20 +25,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
+from turf_app import briefs
+from turf_app.markets import (
+    PRESETS,
+    MarketRequest,
+    MarketResponse,
+    UniverseTooSmallError,
+    UnknownCategoriesError,
+    UnknownSeedsError,
+    rank_markets,
+    zip_rows,
+)
 from turf_app.normalize import normalize_text
 from turf_app.ratelimit import RateLimiter
-from turf_app.targets import (
-    ChangesUnavailableError,
-    ExportFormat,
-    TargetRequest,
-    TargetResponse,
-    TooManyTargetsError,
-    UnknownCategoryError,
-    UnknownChainError,
-    UnknownMetroError,
-    build_targets,
-    to_csv,
-)
 
 WEB_DIR = Path(__file__).parent / "web"
 
@@ -84,87 +85,55 @@ CONTENT_SECURITY_POLICY = "; ".join(
     ]
 )
 
-# Chains and categories as one searchable list; $kind optionally limits it to one.
-_SEARCH_CANDIDATES = """
-    WITH candidates AS (
-        SELECT 'chain' AS kind, chain_key AS key, chain_key AS search_key,
-               display_name, categories[1] AS detail, n_open, n_total
-        FROM chains WHERE $kind IS NULL OR $kind = 'chain'
-        UNION ALL
-        SELECT 'category', category_key, search_key, label, parent, n_open, n_total
-        FROM categories WHERE $kind IS NULL OR $kind = 'category'
-    )
-"""
-
-# Similarity needed for a fuzzy (typo) match, e.g. "starbuks" -> "starbucks".
+# Similarity needed for a fuzzy (typo) match, e.g. "pet grommer" -> "pet groomer".
 FUZZY_MIN_SIMILARITY = 0.88
 
 
 class Meta(BaseModel):
     commit: str
     release: str
-    # The release "new since" compares against; null when the file has no change data.
-    previous_release: str | None
     built_at_utc: datetime
-    places: int
-    chains: int
+    metros: int
+    categories: int
+    briefs: int
 
 
-class ChainSummary(BaseModel):
-    chain_key: str
-    display_name: str
-    category: str | None
-    n_open: int
-    n_total: int
-
-
-class SearchResult(BaseModel):
-    kind: Literal["chain", "category"]
+class PresetOut(BaseModel):
     key: str
-    display_name: str
-    detail: str | None
+    label: str
+    example: str
+    categories: list[str]
+    has_briefs: bool
+
+
+class CategoryResult(BaseModel):
+    key: str
+    label: str
+    parent: str | None
     n_open: int
-    n_total: int
 
 
 class Metro(BaseModel):
     metro_code: str
     name: str
     kind: Literal["metro", "micro"]
-    n_open: int
-    n_total: int
+    population: int
+    growth_pct: float
     # Extent of the area's places, to frame it on the map.
     bounds: tuple[float, float, float, float]  # min_lon, min_lat, max_lon, max_lat
 
 
-_METRO_COLUMNS = "metro_code, name, kind, n_open, n_total, min_lon, min_lat, max_lon, max_lat"
+_METRO_COLUMNS = (
+    "metro_code, name, kind, population, growth_pct, min_lon, min_lat, max_lon, max_lat"
+)
 
 
 def _metro(row: tuple[object, ...]) -> Metro:
-    code, name, kind, n_open, n_total, *bounds = row
+    code, name, kind, population, growth, *bounds = row
     return Metro.model_validate(
-        {"metro_code": code, "name": name, "kind": kind, "n_open": n_open, "n_total": n_total,
-         "bounds": bounds}
+        {"metro_code": code, "name": name, "kind": kind, "population": population,
+         "growth_pct": growth, "bounds": bounds}
     )  # fmt: skip
-
-
-class Location(BaseModel):
-    id: str
-    name: str
-    status: str | None
-    confidence: float
-    address: str | None
-    locality: str | None
-    state: str | None
-    postcode: str | None
-    lat: float
-    lon: float
-
-
-class ChainLocations(BaseModel):
-    chain: ChainSummary
-    include_unverified: bool
-    locations: list[Location]
 
 
 def _cursor(request: Request) -> Iterator[duckdb.DuckDBPyConnection]:
@@ -181,18 +150,22 @@ def _cursor(request: Request) -> Iterator[duckdb.DuckDBPyConnection]:
 Db = Annotated[duckdb.DuckDBPyConnection, Depends(_cursor)]
 
 
-def _previous_release(con: duckdb.DuckDBPyConnection) -> str | None:
-    """The change view's baseline, if this serving file has one (schema v4 built
-    with changes). Older files work without it, so code can deploy before data."""
-    has = con.execute("""
-        SELECT count(*) = 2 FROM information_schema.columns
-        WHERE (table_name = 'meta' AND column_name = 'previous_release')
-           OR (table_name = 'places' AND column_name = 'is_new')
-    """).fetchone()
-    if not has or not has[0]:
-        return None
-    row = con.execute("SELECT previous_release FROM meta").fetchone()
-    return str(row[0]) if row and row[0] else None
+def _tiered_search(table: str, columns: str, order: str) -> str:
+    """Prefix, then word-start, then substring, then fuzzy (typo) matches on search_key."""
+    return f"""
+        SELECT {columns} FROM (
+            SELECT *,
+                   CASE WHEN starts_with(search_key, $q) THEN 1
+                        WHEN contains(search_key, ' ' || $q) THEN 2
+                        WHEN contains(search_key, $q) THEN 3
+                        ELSE 4 END AS tier,
+                   jaro_winkler_similarity(search_key, $q) AS sim
+            FROM {table}
+        )
+        WHERE tier < 4 OR sim >= $min_sim
+        ORDER BY tier, {order}
+        LIMIT $limit
+    """
 
 
 def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = None) -> FastAPI:
@@ -207,18 +180,22 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Each uvicorn worker opens its own connection; cap DuckDB so two
-        # workers fit inside the container's memory limit.
+        # The served file is a few MB of aggregates; a small cap is plenty.
         con = duckdb.connect(
             str(path),
             read_only=True,
             config={
-                "memory_limit": os.environ.get("TURF_DB_MEMORY", "1GB"),
+                "memory_limit": os.environ.get("TURF_DB_MEMORY", "512MB"),
                 "threads": int(os.environ.get("TURF_DB_THREADS", "2")),
             },
         )
+        known = {r[0] for r in con.execute("SELECT category_key FROM categories").fetchall()}
+        for preset in PRESETS.values():
+            missing = set(preset.categories) - known
+            if missing:
+                raise RuntimeError(f"preset {preset.key}: unknown categories {sorted(missing)}")
         app.state.db = con
-        app.state.previous_release = _previous_release(con)
+        app.state.briefs = briefs.load()
         try:
             yield
         finally:
@@ -262,108 +239,48 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
     def meta(db: Db, request: Request) -> Meta:
         row = db.execute("""
             SELECT m.release, m.built_at_utc,
-                   (SELECT count(*) FROM places), (SELECT count(*) FROM chains)
+                   (SELECT count(*) FROM metros), (SELECT count(*) FROM categories)
             FROM meta m
         """).fetchone()
         assert row is not None
         return Meta(
             commit=commit,
             release=row[0],
-            previous_release=request.app.state.previous_release,
             built_at_utc=row[1],
-            places=row[2],
-            chains=row[3],
+            metros=row[2],
+            categories=row[3],
+            briefs=len(request.app.state.briefs),
         )
 
-    @app.get("/api/chains/search")
-    def search_chains(
-        db: Db,
-        q: Annotated[str, Query(min_length=2, max_length=80)],
-        limit: Annotated[int, Query(ge=1, le=25)] = 10,
-    ) -> list[ChainSummary]:
-        query = normalize_text(q)
-        if len(query) < 2:
-            return []
-        # Rank prefix (including exact), then word-start, then substring, then
-        # fuzzy matches; within a tier, bigger chains first. Exact matches share
-        # the prefix tier so "orangetheory" finds Orangetheory Fitness (1,275
-        # locations) before a 3-location chain named just "Orangetheory".
-        rows = db.execute(
-            """
-            SELECT chain_key, display_name, category, n_open, n_total FROM (
-                SELECT *, categories[1] AS category,
-                       CASE WHEN starts_with(chain_key, $q) THEN 1
-                            WHEN contains(chain_key, ' ' || $q) THEN 2
-                            WHEN contains(chain_key, $q) THEN 3
-                            ELSE 4 END AS tier,
-                       jaro_winkler_similarity(chain_key, $q) AS sim
-                FROM chains
-            )
-            WHERE tier < 4 OR sim >= $min_sim
-            ORDER BY tier, n_open DESC, sim DESC
-            LIMIT $limit
-            """,
-            {"q": query, "min_sim": FUZZY_MIN_SIMILARITY, "limit": limit},
-        ).fetchall()
+    @app.get("/api/presets")
+    def presets(request: Request) -> list[PresetOut]:
+        with_briefs = {key[0] for key in request.app.state.briefs}
         return [
-            ChainSummary(
-                chain_key=r[0], display_name=r[1], category=r[2], n_open=r[3], n_total=r[4]
+            PresetOut(
+                key=p.key,
+                label=p.label,
+                example=p.example,
+                categories=list(p.categories),
+                has_briefs=p.key in with_briefs,
             )
-            for r in rows
+            for p in PRESETS.values()
         ]
 
-    @app.get("/api/search")
-    def search(
+    @app.get("/api/categories/search")
+    def search_categories(
         db: Db,
         q: Annotated[str, Query(min_length=2, max_length=80)],
-        kind: Literal["chain", "category"] | None = None,
         limit: Annotated[int, Query(ge=1, le=25)] = 10,
-    ) -> list[SearchResult]:
-        """Chains and categories in one ranked list (same tiers as chain search)."""
+    ) -> list[CategoryResult]:
+        """Overture categories to use as signals; bigger categories first within a tier."""
         query = normalize_text(q)
         if len(query) < 2:
             return []
         rows = db.execute(
-            _SEARCH_CANDIDATES
-            + """
-            SELECT kind, key, display_name, detail, n_open, n_total FROM (
-                SELECT *,
-                       CASE WHEN starts_with(search_key, $q) THEN 1
-                            WHEN contains(search_key, ' ' || $q) THEN 2
-                            WHEN contains(search_key, $q) THEN 3
-                            ELSE 4 END AS tier,
-                       jaro_winkler_similarity(search_key, $q) AS sim
-                FROM candidates
-            )
-            WHERE tier < 4 OR sim >= $min_sim
-            ORDER BY tier, n_open DESC, sim DESC
-            LIMIT $limit
-            """,
-            {"q": query, "kind": kind, "min_sim": FUZZY_MIN_SIMILARITY, "limit": limit},
+            _tiered_search("categories", "category_key, label, parent, n_open", "n_open DESC"),
+            {"q": query, "min_sim": FUZZY_MIN_SIMILARITY, "limit": limit},
         ).fetchall()
-        tokens = query.split()
-        if not rows and len(tokens) > 1:
-            # Nothing matched the whole phrase ("dog daycare"): fall back to
-            # entries where any word starts a word, most words matched first.
-            # Tokens are normalized to [a-z0-9], so they're safe in a regex.
-            rows = db.execute(
-                _SEARCH_CANDIDATES
-                + """
-                SELECT kind, key, display_name, detail, n_open, n_total FROM (
-                    SELECT *,
-                           len(list_filter(
-                               $tokens, lambda t: regexp_matches(search_key, '(^| )' || t)
-                           )) AS hits
-                    FROM candidates
-                )
-                WHERE hits > 0
-                ORDER BY hits DESC, n_open DESC
-                LIMIT $limit
-                """,
-                {"tokens": tokens, "kind": kind, "limit": limit},
-            ).fetchall()
-        fields = list(SearchResult.model_fields)
-        return [SearchResult(**dict(zip(fields, r, strict=True))) for r in rows]
+        return [CategoryResult(key=r[0], label=r[1], parent=r[2], n_open=r[3]) for r in rows]
 
     @app.get("/api/metros/search")
     def search_metros(
@@ -371,25 +288,12 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         q: Annotated[str, Query(min_length=2, max_length=80)],
         limit: Annotated[int, Query(ge=1, le=25)] = 10,
     ) -> list[Metro]:
-        """Census metro and micro areas; same tiers as chain search, metros before micros."""
+        """Census metro and micro areas; metros before micros, then bigger first."""
         query = normalize_text(q)
         if len(query) < 2:
             return []
         rows = db.execute(
-            f"""
-            SELECT {_METRO_COLUMNS} FROM (
-                SELECT *,
-                       CASE WHEN starts_with(search_key, $q) THEN 1
-                            WHEN contains(search_key, ' ' || $q) THEN 2
-                            WHEN contains(search_key, $q) THEN 3
-                            ELSE 4 END AS tier,
-                       jaro_winkler_similarity(search_key, $q) AS sim
-                FROM metros
-            )
-            WHERE tier < 4 OR sim >= $min_sim
-            ORDER BY tier, kind, n_total DESC
-            LIMIT $limit
-            """,
+            _tiered_search("metros", _METRO_COLUMNS, "kind, population DESC"),
             {"q": query, "min_sim": FUZZY_MIN_SIMILARITY, "limit": limit},
         ).fetchall()
         return [_metro(r) for r in rows]
@@ -403,84 +307,62 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             raise HTTPException(status_code=404, detail=f"Unknown metro area: {metro_code}")
         return _metro(row)
 
-    @app.get("/api/chains/{chain_key}/locations")
-    def chain_locations(
-        db: Db,
-        chain_key: str,
-        include_unverified: bool = False,
-        state: Annotated[str | None, Query(pattern="^[A-Za-z]{2}$")] = None,
-        metro: Annotated[str | None, Query(pattern="^[0-9]{5}$")] = None,
-    ) -> ChainLocations:
-        chain_row = db.execute(
-            """SELECT chain_key, display_name, categories[1], n_open, n_total
-               FROM chains WHERE chain_key = ?""",
-            [chain_key],
-        ).fetchone()
-        if chain_row is None:
-            raise HTTPException(status_code=404, detail=f"Unknown chain: {chain_key}")
-        rows = db.execute(
-            """
-            SELECT id, name, status, confidence, address, locality, state, postcode, lat, lon
-            FROM places
-            WHERE chain_key = $chain
-              AND ($unverified OR status = 'open')
-              AND ($state IS NULL OR state = $state)
-              AND ($metro IS NULL OR metro = $metro)
-            ORDER BY state, locality, id
-            """,
-            {
-                "chain": chain_key,
-                "unverified": include_unverified,
-                "state": state.upper() if state else None,
-                "metro": metro,
-            },
-        ).fetchall()
-        fields = list(Location.model_fields)
-        return ChainLocations(
-            chain=ChainSummary(
-                chain_key=chain_row[0],
-                display_name=chain_row[1],
-                category=chain_row[2],
-                n_open=chain_row[3],
-                n_total=chain_row[4],
-            ),
-            include_unverified=include_unverified,
-            locations=[Location(**dict(zip(fields, r, strict=True))) for r in rows],
-        )
-
-    def _targets_or_404(
-        db: duckdb.DuckDBPyConnection, req: TargetRequest, request: Request
-    ) -> TargetResponse:
+    def _markets(db: duckdb.DuckDBPyConnection, req: MarketRequest) -> MarketResponse:
         try:
-            return build_targets(db, req, request.app.state.previous_release)
-        except UnknownChainError as e:
-            raise HTTPException(status_code=404, detail=f"Unknown chain: {e}") from e
-        except UnknownCategoryError as e:
+            return rank_markets(db, req)
+        except UnknownCategoriesError as e:
             raise HTTPException(status_code=404, detail=f"Unknown category: {e}") from e
-        except UnknownMetroError as e:
+        except UnknownSeedsError as e:
             raise HTTPException(status_code=404, detail=f"Unknown metro area: {e}") from e
-        except (TooManyTargetsError, ChangesUnavailableError) as e:
+        except UniverseTooSmallError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
-    @app.post("/api/targets")
-    def targets(db: Db, req: TargetRequest, request: Request) -> TargetResponse:
-        return _targets_or_404(db, req, request)
+    @app.post("/api/markets")
+    def markets(db: Db, req: MarketRequest) -> MarketResponse:
+        return _markets(db, req)
 
-    @app.post("/api/targets/export")
-    def export_targets(
-        db: Db, req: TargetRequest, request: Request, format: ExportFormat = ExportFormat.generic
+    @app.post("/api/markets/export")
+    def export_markets(
+        db: Db, req: MarketRequest, format: Literal["metros", "zips"] = "metros"
     ) -> Response:
-        result = _targets_or_404(db, req, request)
-        campaign = req.campaign_name or f"Turf - {req.target_key}"
-        # Keep the filename header safe whatever the key contains.
-        slug = re.sub(r"[^a-z0-9]+", "-", req.target_key.lower()).strip("-") or "targets"
+        """``metros``: the ranked list with reasons. ``zips``: every ZIP code in
+        the ranked metros, one per row, for pasting into Meta or Google Ads."""
+        result = _markets(db, req)
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        if format == "metros":
+            writer.writerow(
+                ["rank", "metro", "cbsa_code", "kind", "population", "growth_2020_25_pct",
+                 "match", "zip_count", "top_signals"]
+            )  # fmt: skip
+            for r in result.results:
+                top = "; ".join(f"{x.label} {x.ratio:g}x typical" for x in r.reasons[:3])
+                writer.writerow(
+                    [r.rank, r.name, r.metro_code, r.kind, r.population, r.growth_pct,
+                     "" if r.match is None else r.match, r.zip_count, top]
+                )  # fmt: skip
+        else:
+            names = {r.metro_code: (r.rank, r.name) for r in result.results}
+            writer.writerow(["zip", "country", "metro", "metro_rank"])
+            for code, zip_code, _ in zip_rows(db, list(names)):
+                writer.writerow([zip_code, "US", names[code][1], names[code][0]])
+        key = req.preset or "custom"
+        mode = "lookalikes" if req.seeds else "top"
+        slug = re.sub(r"[^a-z0-9]+", "-", f"{key}-{mode}").strip("-")
         return Response(
-            content=to_csv(result, format, campaign),
+            content=buf.getvalue(),
             media_type="text/csv; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="turf-{slug}-{format.value}.csv"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="turf-{slug}-{format}.csv"'},
         )
+
+    @app.get("/api/briefs/{preset}/{metro_code}")
+    def get_brief(request: Request, preset: str, metro_code: str) -> briefs.Brief:
+        """A pre-written creative brief for a preset in a metro (see briefs.py)."""
+        loaded: dict[tuple[str, str], briefs.Brief] = request.app.state.briefs
+        brief = loaded.get((preset, metro_code))
+        if brief is None:
+            raise HTTPException(status_code=404, detail="No brief for this preset and metro yet.")
+        return brief
 
     @app.get("/", include_in_schema=False)
     @app.get("/index.html", include_in_schema=False)
@@ -498,3 +380,6 @@ def __getattr__(name: str) -> FastAPI:
     if name == "app":
         return create_app()
     raise AttributeError(name)
+
+
+__all__ = ["create_app", "render_index"]

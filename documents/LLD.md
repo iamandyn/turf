@@ -15,8 +15,9 @@ The steps run in order on a dev machine. Each one reads the previous step's file
 | 0 (optional) | `scripts/inspect_places.py` | S3 | stdout (schema, sample stats) | ~6 s |
 | 1 | `scripts/extract_us.py` | S3 places | `us_places.parquet`, `extract_manifest.json` | 72 s / 5.3 GB |
 | 1b | `scripts/extract_states.py` | S3 divisions | `us_states.parquet` (7 MB) | seconds |
+| 1c | `scripts/extract_metros.py` | Census CBSA boundaries (pinned download) | `us_metros.parquet` (5 MB) | seconds |
 | 2 | `scripts/build_chains.py` | steps 1, 1b | `places.parquet`, `chains.parquet`, `chains_manifest.json` | ~3 min / 8.6 GB |
-| 3 | `scripts/build_serving_db.py` | step 2 | `turf.duckdb` (1.32 GB) | 5 s |
+| 3 | `scripts/build_serving_db.py` | steps 2, 1c | `turf.duckdb` (1.36 GB) | 27 s / 4.6 GB (`--memory-limit`, default 4 GB) |
 | checks | `scripts/check_extract.py`, `scripts/investigate_chain.py` | steps 1, 2 | stdout | seconds |
 
 All steps take `--release` (e.g. `2026-11-18.0`). List the available releases with a DuckDB `glob('s3://overturemaps-us-west-2/release/*/theme=places/type=place/*')`; S3 keeps only the last few.
@@ -36,6 +37,13 @@ All steps take `--release` (e.g. `2026-11-18.0`). List the available releases wi
 - **Source:** `theme=divisions/type=division_area`, filtered to `country='US' AND subtype='region'`.
 - **Output:** `state` (two-letter code), `class` (`land` or `maritime`), `geometry`. That's 51 land polygons (50 states plus DC) and 23 maritime polygons.
 
+### 1.2b Step 1c: metro areas (`extract_metros.py`)
+
+- **Why not Overture:** Overture's divisions have no metro areas (they go country → region → county → locality). Media buyers plan by metro, and the standard public definition is the Census Bureau's Core-Based Statistical Areas.
+- **Source:** Census cartographic boundary file `cb_2024_us_cbsa_500k.zip` (2024 vintage, July 2023 delineations), downloaded to `data/<release>/census_cbsa_2024/` and **checked against a pinned SHA-256**, so a rebuild uses the same file. Read with DuckDB spatial (`ST_Read` over `/vsizip/`).
+- **Output:** `code` (CBSA code, e.g. `12420`), `name` ("Austin-Round Rock-San Marcos, TX"), `kind` (`metro` = metropolitan, `micro` = micropolitan), `search_key` (`normalize_text(name)`), `geometry` (NAD83, close enough to WGS84 for this). Puerto Rico is dropped: 387 metros and 538 micro areas.
+- **Updating:** when the Census publishes a new vintage, change `URL` and `SHA256` in the script.
+
 ### 1.3 Step 2: chains, duplicates, states (`build_chains.py` → `chains.build()`, `states.fill_states()`)
 
 See §2 for the rules. Output `places.parquet` columns:
@@ -51,14 +59,17 @@ The file is written to `turf.duckdb.building`, then renamed, so a reader never s
 
 | Table | Contents |
 |---|---|
-| `places` | Non-duplicate rows only: `id, name, chain_key, basic_category, category (= taxonomy_primary), confidence, status, address, locality, state, postcode, lat, lon`. **Sorted by `chain_key, state`**, so DuckDB's per-block min/max statistics skip everything except the requested chain. Category filters scan all rows, which still takes about 8 ms |
+| `places` | Non-duplicate rows only: `id, name, chain_key, basic_category, category (= taxonomy_primary), confidence, status, address, locality, state, postcode, lat, lon, metro` (CBSA code or NULL; 94.2% of places are in one). **Sorted by `chain_key, state`**, so DuckDB's per-block min/max statistics skip everything except the requested chain. Category filters scan all rows, which still takes about 8 ms |
 | `chains` | `chain_key, display_name, categories, n_total, n_open`; only chains with at least 1 open location |
 | `categories` | `category_key` (e.g. `pet_groomer`), `label` ("Pet groomer"), `search_key` ("pet groomer"), `parent` (most common `basic_category`), `n_total, n_open`; only categories with at least 1 open place |
-| `meta` | `release, schema_version (2), built_at_utc` |
+| `metros` | `metro_code, name, kind, search_key, n_total, n_open, min_lat, min_lon, max_lat, max_lon` (the extent of its places, to frame it on the map); only areas with at least 1 place: 925 |
+| `meta` | `release, schema_version (3), built_at_utc` |
 
-Result: 18,226,778 places, 40,026 chains, and 2,060 categories (1.36 GB).
+**Metro tagging** is a point-in-polygon join of the unique places against `us_metros.parquet`, written as an **inner** join into a temp table and then left-joined by id: DuckDB plans the inner `ST_Contains` join with its spatial join operator (about 14 s for 18M points), while a LEFT spatial join would fall back to a nested loop. CBSAs don't overlap, so each place gets at most one metro. Metro membership comes from coordinates, not the address, so it's unaffected by bad address states: about 1,100 places inside the New York metro have an address state that isn't NY or NJ. The API never loads the spatial extension; it reads the plain `metro` code.
 
-Schema history: v1 had no categories; **v2** added `places.category` and the `categories` table. Old code runs against a v2 file, but v2 code needs v2 data, so deploy the data first.
+Result: 18,226,778 places, 40,026 chains, 2,060 categories, and 925 metro areas (1.36 GB).
+
+Schema history: v1 had no categories; v2 added `places.category` and the `categories` table; **v3** added `places.metro` and the `metros` table. Each time, old code runs against the new file but new code needs the new data, so **deploy the data first** (`scripts/deploy_data.sh`), then push the code.
 
 ---
 
@@ -152,8 +163,10 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 | `GET /api/meta` | | `{commit, release, built_at_utc, places, chains}` | |
 | `GET /api/search` | `q` (2–80 chars), `kind` (`chain`/`category`, optional), `limit` (1–25) | `[SearchResult]`: chains and categories ranked together | 422 |
 | `GET /api/chains/search` | `q` (2–80 chars), `limit` (1–25, default 10) | `[ChainSummary]` (chains only; kept for API users) | 422 |
-| `GET /api/chains/{chain_key}/locations` | `include_unverified` (default false), `state` (2 letters) | `{chain, include_unverified, locations: [Location]}` | 404, 422 |
-| `POST /api/targets` | `TargetRequest` | `TargetResponse` | 404 unknown chain, 422 |
+| `GET /api/metros/search` | `q` (2–80 chars), `limit` (1–25) | `[Metro]`: `{metro_code, name, kind, n_open, n_total, bounds: [min_lon, min_lat, max_lon, max_lat]}`, same tiers as chain search, then metros before micros, then size | 422 |
+| `GET /api/metros/{metro_code}` | | `Metro` (used to restore `?metro=` links) | 404 |
+| `GET /api/chains/{chain_key}/locations` | `include_unverified` (default false), `state` (2 letters), `metro` (5 digits) | `{chain, include_unverified, locations: [Location]}` | 404, 422 |
+| `POST /api/targets` | `TargetRequest` | `TargetResponse` | 404 unknown chain, category or metro; 422 |
 | `POST /api/targets/export?format=generic\|google_ads_editor` | `TargetRequest` | CSV attachment | 404, 422 |
 
 `ChainSummary = {chain_key, display_name, category, n_open, n_total}`. `SearchResult = {kind, key, display_name, detail, n_open, n_total}`, where `detail` is the chain's main category or the category's parent.
@@ -177,6 +190,7 @@ Within a tier, entries with more open locations come first. `/api/search` uses t
 | `radius_mi` | 1–50 (Meta Ads Manager's US range) | 1 |
 | `include_unverified` | bool | false |
 | `states` | list of 2-letter codes, upper-cased, deduplicated | all |
+| `metros` | up to 10 CBSA codes (5 digits), deduplicated; ANDed with `states` if both are given (the UI sends one or the other) | all |
 | `own_chain_key` | your own chain; can't also be in `chain_keys` (422) | none |
 | `own_locations` | your stores as `[{name?, lat, lon}]`, ≤ 5,000 (`MAX_UPLOADED_LOCATIONS`); the frontend fills it from an uploaded CSV. Combines with `own_chain_key` | none |
 | `own_filter` | `only_near` (keep targets within `own_radius_mi` of yours) or `skip_near` (drop them) | `only_near` |
@@ -186,12 +200,12 @@ Within a tier, entries with more open locations come first. `/api/search` uses t
 **Why `only_near` is the default.** Geo-conquesting works when the competitor's customers could realistically switch: someone leaving a Planet Fitness 40 miles from your nearest gym won't. So the useful list is competitor locations *near* yours. `skip_near` (the original behavior) is still there for when you'd otherwise pay to reach your own customers.
 
 **Algorithm** (one SQL query, plus a count):
-1. Candidates are the chains' (or category's) places matching the status and state filters. **Your own chain's places are never candidates** (they can appear in a category). They're counted first: more than `MAX_TARGETS` (**25,000**) returns **422 "Pick a state…"**. Nearly every chain fits nationwide (Subway, 22,953 open; Dollar General, 20,572); U-Haul (29,531) and broad categories (restaurants, 280k) need a state.
-2. "Own" locations are **all** of `own_chain_key`'s places, *including unverified* (a store of yours that may be open still counts), `UNION ALL` the uploaded points, passed to DuckDB as one `STRUCT[]` parameter and `unnest`ed. Uploaded points without a name are labeled `uploaded location`.
+1. Candidates are the chains' (or category's) places matching the status, state and metro filters. **Your own chain's places are never candidates** (they can appear in a category). They're counted first: more than `MAX_TARGETS` (**25,000**) returns **422 "Pick a state or metro area…"**. Nearly every chain fits nationwide (Subway, 22,953 open; Dollar General, 20,572); U-Haul (29,531) and broad categories (restaurants, 280k) need a state.
+2. "Own" locations are **all** of `own_chain_key`'s places, *including unverified* and **regardless of the state/metro filter** (your store just across the line still makes a nearby competitor "near yours") (a store of yours that may be open still counts), `UNION ALL` the uploaded points, passed to DuckDB as one `STRUCT[]` parameter and `unnest`ed. Uploaded points without a name are labeled `uploaded location`.
 3. Each candidate's nearest own location is found by haversine distance (miles), prefiltered to a latitude window of `own_radius_mi / 69 + 0.01` degrees, and kept if ≤ `own_radius_mi`.
 4. `only_near`: candidates with a nearest own location are targets (with `nearest_own_location`, `distance_mi`); the rest are dropped as `far_from_yours` (their nearest store isn't computed, by design of the window). `skip_near`: the reverse, dropped as `near_yours` with the distance.
 
-`TargetResponse = {chain_keys, category, radius_mi, own_filter, own_radius_mi, own_location_count, candidates, dropped_count, targets: [Target], dropped: [Dropped]}`. `Target` carries `chain_key` (which competitor) and, when near one of yours, `nearest_own_location` and `distance_mi`. `Dropped = {id, name, address, state, lat, lon, reason, nearest_own_location?, distance_mi?}`. `own_filter` and `own_radius_mi` are `null` when no own locations were given.
+`TargetResponse = {chain_keys, category, metros, radius_mi, own_filter, own_radius_mi, own_location_count, candidates, dropped_count, targets: [Target], dropped: [Dropped]}`. `Target` carries `chain_key` (which competitor) and, when near one of yours, `nearest_own_location` and `distance_mi`. `Dropped = {id, name, address, state, lat, lon, reason, nearest_own_location?, distance_mi?}`. `own_filter` and `own_radius_mi` are `null` when no own locations were given.
 
 **Performance** (`scripts/bench_targets.py`, real DB, API container limits of 2 threads / 1 GB): one chain 18 ms; only-near your chain 39 ms; three chains skip-near 82 ms; worst case, Subway (22,953) against 5,000 uploaded stores at 50 mi, 445 ms.
 
@@ -216,8 +230,8 @@ The filename comes from `TargetRequest.target_key` (e.g. `turf-orangetheory-fitn
 
 | Part | What it does |
 |---|---|
-| `state` | targets (up to 10 chains, or one category), own chain, uploaded store list, own filter + distance, US state, radius, include-unverified. Mirrored to the URL by `syncUrl` (`?chain=a&chain=b` or `?cat=`, then `&own=&mode=near|skip&d=&state=&r=&unverified=1`), restored by `restoreFromUrl`. **Old links** (from before `only_near`) have `own` without `mode` and meant skip-near with the distance in `skip`; they still open that way. The uploaded list isn't in the URL (too big); the UI says so |
-| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over `/api/search`; `kind` is a function, so the target box offers chains and categories until a chain is picked, then only chains. Chains show their main category ("gym · 1,275 open") to tell similar names apart. 200 ms debounce; out-of-order responses dropped |
+| `state` | targets (up to 10 chains, or one category), own chain, uploaded store list, own filter + distance, US state **or** metro area (picking one clears the other), radius, include-unverified. Mirrored to the URL by `syncUrl` (`?chain=a&chain=b` or `?cat=`, then `&own=&mode=near|skip&d=&state=&metro=&r=&unverified=1`), restored by `restoreFromUrl`. **Old links** (from before `only_near`) have `own` without `mode` and meant skip-near with the distance in `skip`; they still open that way. The uploaded list isn't in the URL (too big); the UI says so |
+| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over a `search(q)` function: `/api/search` for competitors and your chain (the target box offers chains and categories until a chain is picked, then only chains), `/api/metros/search` for metros (`pickMetro` frames the metro's bounds when no competitor is picked yet). Chains show their main category ("gym · 1,275 open") to tell similar names apart. 200 ms debounce; out-of-order responses dropped |
 | `addTarget`, `renderTargets` | a category replaces any chains (it already covers them); a chain replaces a category; duplicates and your own chain are refused |
 | `parseStoreList` | client-side CSV parsing for the upload: comma/semicolon/tab, quoted fields, BOM. Finds `lat/latitude/y` and `lon/lng/long/longitude/x` columns (else the first two numeric columns of a headerless file), a name or address column, skips rows without valid coordinates (and reports how many), swaps columns if every row looks like (lon, lat) in the US, caps at 5,000 rows / 5 MB. Addresses alone are refused: no geocoding |
 | `refresh` | `POST /api/targets`, plus `GET /api/chains/{own}/locations?include_unverified=true` when you set your chain (uploaded points are drawn from memory); a request counter drops stale responses |
@@ -312,7 +326,7 @@ The `production` environment is optional; add required reviewers there to gate d
 
 | Task | Command |
 |---|---|
-| New Overture release | run pipeline steps 1–3 with `--release X`, check `chains_manifest.json` spot checks, then `TURF_HOST=ovh scripts/deploy_data.sh X` |
+| New Overture release | run pipeline steps 1–3 (including 1b and 1c) with `--release X`, check `chains_manifest.json` spot checks, then `TURF_HOST=ovh scripts/deploy_data.sh X` |
 | Roll back data | `TURF_HOST=ovh scripts/deploy_data.sh --rollback <older release>` |
 | Roll back code | re-run the `deploy` job of an older commit in GitHub Actions, or on the server: `sudo -u turfdeploy SSH_ORIGINAL_COMMAND="deploy <sha>" /opt/turf/bin/server-deploy </dev/null` (only works if that image is still on the box or the package is public) |
 | Logs | `ssh ovh docker logs --tail 100 turf` |
@@ -327,5 +341,5 @@ The `production` environment is optional; add required reviewers there to gate d
 - **Pipeline:** `test_chains.py` and `test_states.py` build tiny DuckDB tables shaped like real cases and run the real `build()` / `fill_states()`.
 - **API:** `conftest.py` builds a serving database **with the real `write_serving_db`**, then `test_api.py` and `test_targets.py` use FastAPI's `TestClient`. Rate limiting is disabled in the shared client and tested separately with small rules.
 - **Convention:** a test case taken from real data says so in a comment, quoting the actual row ("Real case: …").
-- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (results page and phone layout, via `axe-playwright-python`), and walks the flow: search, state, radius, zoom hint, a second competitor, your chain in only-near then skip-near mode, layer toggle, both exports (row counts must match the on-screen count), URL restore, an old-style `&skip=` link, a store-list upload, a broad category, phone layout. It runs locally against any base URL, and in CI after every deploy.
+- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (results page and phone layout, via `axe-playwright-python`), and walks the flow: search, state, radius, zoom hint, a second competitor, your chain in only-near then skip-near mode, layer toggle, both exports (row counts must match the on-screen count), URL restore, an old-style `&skip=` link, a store-list upload, a broad category, a metro area (fewer targets than nationwide, in the URL), phone layout. It runs locally against any base URL, and in CI after every deploy.
 - **Not covered by automated tests:** the S3 extract scripts (they need network and run for minutes), the shell deploy scripts beyond syntax and the command check, and the Google Ads Editor import, which was checked by hand once (§3.3) and isn't automated.

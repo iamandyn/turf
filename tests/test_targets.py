@@ -202,7 +202,7 @@ def test_too_many_targets_asks_for_a_state(
     monkeypatch.setattr(targets, "MAX_TARGETS", 2)
     resp = client.post("/api/targets", json={"category": "coffee_shop"})
     assert resp.status_code == 422
-    assert "Pick a state" in resp.json()["detail"]
+    assert "Pick a state or metro area" in resp.json()["detail"]
     # Narrowed to one state it fits again (sb2 + dk3 in CA).
     assert (
         client.post("/api/targets", json={"category": "coffee_shop", "states": ["CA"]}).status_code
@@ -327,3 +327,41 @@ def test_generic_export_has_distance_to_yours(client: TestClient) -> None:
 def test_unknown_request_fields_rejected(client: TestClient) -> None:
     old = {"chain_keys": ["starbucks"], "exclude_chain_key": "dunkin"}
     assert client.post("/api/targets", json=old).status_code == 422
+
+
+# --- Metro areas ---
+
+
+def test_metro_filter(client: TestClient) -> None:
+    data = post(client, chain_keys=["starbucks", "orangetheory fitness"], metros=["12420"])
+    assert target_ids(data) == {"sb1", "otf1"}  # otf2 is in Los Angeles, sb2 in San Francisco
+    assert data["metros"] == ["12420"]
+
+
+def test_several_metros_and_state_combine(client: TestClient) -> None:
+    both = post(client, chain_keys=["starbucks"], metros=["41860", "12420", "12420"])
+    assert target_ids(both) == {"sb1", "sb2"} and both["metros"] == ["12420", "41860"]
+    # States and metros are both applied: San Francisco's metro isn't in TX.
+    assert (
+        target_ids(post(client, chain_keys=["starbucks"], metros=["41860"], states=["TX"])) == set()
+    )
+
+
+def test_metro_validation(client: TestClient) -> None:
+    unknown = {"chain_keys": ["starbucks"], "metros": ["00000"]}
+    assert client.post("/api/targets", json=unknown).status_code == 404
+    malformed = {"chain_keys": ["starbucks"], "metros": ["Austin"]}
+    assert client.post("/api/targets", json=malformed).status_code == 422
+
+
+def test_own_locations_outside_the_metro_still_count(client: TestClient) -> None:
+    # Your store just outside the metro still makes a competitor inside it "near yours".
+    outside = {"lat": 29.895, "lon": -97.74}  # just south of the Austin box
+    near_edge = post(
+        client,
+        category="coffee_shop",
+        metros=["12420"],
+        own_locations=[outside],
+        own_radius_mi=20,
+    )
+    assert "ind" in target_ids(near_edge)  # Joe's Coffee at (30.0, -97.5), ~16 mi away

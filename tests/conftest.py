@@ -33,6 +33,18 @@ PLACES = [
     ("ind", "Joe's Coffee", None, "coffee_shop", 0.9, "open", "TX", 30.0, -97.5, False),
 ]  # fmt: skip
 
+# Two boxes standing in for Census metro areas: Austin (sb1, sb3, otf1, ... are
+# inside) and San Francisco (sb2, dk3). otf2 (Los Angeles) and x1 (30.0, -97.0)
+# are in neither.
+METROS = [
+    ("12420", "Austin-Round Rock-San Marcos, TX", "metro", "austin round rock san marcos tx",
+     "POLYGON((-98.2 29.9, -97.3 29.9, -97.3 30.6, -98.2 30.6, -98.2 29.9))"),
+    ("41860", "San Francisco-Oakland-Fremont, CA", "metro", "san francisco oakland fremont ca",
+     "POLYGON((-122.6 37.5, -122.0 37.5, -122.0 38.0, -122.6 38.0, -122.6 37.5))"),
+    ("99999", "Empty Micro, TX", "micro", "empty micro tx",
+     "POLYGON((-100 40, -99 40, -99 41, -100 41, -100 40))"),
+]  # fmt: skip
+
 CHAINS = [
     ("starbucks", "Starbucks", ["coffee_shop"]),
     ("orangetheory fitness", "Orangetheory Fitness", ["gym"]),
@@ -61,8 +73,19 @@ def serving_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     con.execute("CREATE TABLE c (chain_key VARCHAR, display_name VARCHAR, categories VARCHAR[])")
     con.executemany("INSERT INTO c VALUES (?, ?, ?)", CHAINS)
     con.execute(f"COPY c TO '{d / 'chains.parquet'}' (FORMAT parquet)")
+    con.execute("INSTALL spatial; LOAD spatial;")
+    con.execute(
+        "CREATE TABLE m (code VARCHAR, name VARCHAR, kind VARCHAR, search_key VARCHAR, wkt VARCHAR)"
+    )
+    con.executemany("INSERT INTO m VALUES (?, ?, ?, ?, ?)", METROS)
+    con.execute(f"""
+        COPY (SELECT code, name, kind, search_key, ST_GeomFromText(wkt) AS geometry FROM m)
+        TO '{d / "metros.parquet"}' (FORMAT parquet)
+    """)
     db = d / "turf.duckdb"
-    write_serving_db(d / "places.parquet", d / "chains.parquet", db, "test-release")
+    write_serving_db(
+        d / "places.parquet", d / "chains.parquet", d / "metros.parquet", db, "test-release"
+    )
     return db
 
 

@@ -31,6 +31,7 @@ from turf_app.targets import (
     TooManyTargetsError,
     UnknownCategoryError,
     UnknownChainError,
+    UnknownMetroError,
     build_targets,
     to_csv,
 )
@@ -96,6 +97,27 @@ class SearchResult(BaseModel):
     detail: str | None
     n_open: int
     n_total: int
+
+
+class Metro(BaseModel):
+    metro_code: str
+    name: str
+    kind: Literal["metro", "micro"]
+    n_open: int
+    n_total: int
+    # Extent of the area's places, to frame it on the map.
+    bounds: tuple[float, float, float, float]  # min_lon, min_lat, max_lon, max_lat
+
+
+_METRO_COLUMNS = "metro_code, name, kind, n_open, n_total, min_lon, min_lat, max_lon, max_lat"
+
+
+def _metro(row: tuple[object, ...]) -> Metro:
+    code, name, kind, n_open, n_total, *bounds = row
+    return Metro.model_validate(
+        {"metro_code": code, "name": name, "kind": kind, "n_open": n_open, "n_total": n_total,
+         "bounds": bounds}
+    )  # fmt: skip
 
 
 class Location(BaseModel):
@@ -292,12 +314,51 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         fields = list(SearchResult.model_fields)
         return [SearchResult(**dict(zip(fields, r, strict=True))) for r in rows]
 
+    @app.get("/api/metros/search")
+    def search_metros(
+        db: Db,
+        q: Annotated[str, Query(min_length=2, max_length=80)],
+        limit: Annotated[int, Query(ge=1, le=25)] = 10,
+    ) -> list[Metro]:
+        """Census metro and micro areas; same tiers as chain search, metros before micros."""
+        query = normalize_text(q)
+        if len(query) < 2:
+            return []
+        rows = db.execute(
+            f"""
+            SELECT {_METRO_COLUMNS} FROM (
+                SELECT *,
+                       CASE WHEN starts_with(search_key, $q) THEN 1
+                            WHEN contains(search_key, ' ' || $q) THEN 2
+                            WHEN contains(search_key, $q) THEN 3
+                            ELSE 4 END AS tier,
+                       jaro_winkler_similarity(search_key, $q) AS sim
+                FROM metros
+            )
+            WHERE tier < 4 OR sim >= $min_sim
+            ORDER BY tier, kind, n_total DESC
+            LIMIT $limit
+            """,
+            {"q": query, "min_sim": FUZZY_MIN_SIMILARITY, "limit": limit},
+        ).fetchall()
+        return [_metro(r) for r in rows]
+
+    @app.get("/api/metros/{metro_code}")
+    def get_metro(db: Db, metro_code: str) -> Metro:
+        row = db.execute(
+            f"SELECT {_METRO_COLUMNS} FROM metros WHERE metro_code = ?", [metro_code]
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Unknown metro area: {metro_code}")
+        return _metro(row)
+
     @app.get("/api/chains/{chain_key}/locations")
     def chain_locations(
         db: Db,
         chain_key: str,
         include_unverified: bool = False,
         state: Annotated[str | None, Query(pattern="^[A-Za-z]{2}$")] = None,
+        metro: Annotated[str | None, Query(pattern="^[0-9]{5}$")] = None,
     ) -> ChainLocations:
         chain_row = db.execute(
             """SELECT chain_key, display_name, categories[1], n_open, n_total
@@ -313,12 +374,14 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             WHERE chain_key = $chain
               AND ($unverified OR status = 'open')
               AND ($state IS NULL OR state = $state)
+              AND ($metro IS NULL OR metro = $metro)
             ORDER BY state, locality, id
             """,
             {
                 "chain": chain_key,
                 "unverified": include_unverified,
                 "state": state.upper() if state else None,
+                "metro": metro,
             },
         ).fetchall()
         fields = list(Location.model_fields)
@@ -341,6 +404,8 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             raise HTTPException(status_code=404, detail=f"Unknown chain: {e}") from e
         except UnknownCategoryError as e:
             raise HTTPException(status_code=404, detail=f"Unknown category: {e}") from e
+        except UnknownMetroError as e:
+            raise HTTPException(status_code=404, detail=f"Unknown metro area: {e}") from e
         except TooManyTargetsError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 

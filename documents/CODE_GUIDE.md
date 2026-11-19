@@ -55,6 +55,7 @@ turf/
 | **Chain aliases** (e.g. merge "Exxon" into "ExxonMobil") | `CHAIN_ALIASES` in `normalize.py` | | `test_normalize.py::test_chain_key` |
 | **Which brands count as chains** (trust thresholds, kiosk exclusions) | `ChainRules`, `EXCLUDED_CHAINS` in `chains.py` | | `tests/test_chains.py` |
 | **Duplicate detection** | `chains.py` step 5, `street_key` in `normalize.py` | `ChainRules.dup_*` | `test_chains.py`, `test_normalize.py::test_street_key_*` |
+| **Metro areas** (Census CBSAs: boundaries, tagging, search, filter) | `scripts/extract_metros.py` (pinned URL + SHA-256), metro tagging in `serving.py` | `metros` filter in `targets.py`; `search_metros`, `get_metro` in `api.py`; `pickMetro`, `searchMetros` in `web/app.js` | `test_targets.py::test_metro_*`, `test_api.py::test_metro*`; fixture boxes in `conftest.py` |
 | **State cleanup / fill** | `normalize_state` (`normalize.py`), `states.py` | `scripts/extract_states.py` | `test_states.py`, `test_normalize.py` |
 | **Serving DB schema** | `serving.py` | every SQL query in `api.py` and `targets.py`; bump `SCHEMA_VERSION` | `tests/conftest.py` builds it |
 | **Search** (chains + categories, ranking, typos, any-word fallback) | `search` in `api.py` (`_SEARCH_CANDIDATES`); `search_chains` for chains only | `FUZZY_MIN_SIMILARITY` | `test_api.py::test_search_*`, `test_unified_search_*` |

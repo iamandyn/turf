@@ -8,7 +8,7 @@
 
 **How to use it:**
 1. Search for competitor chains (up to 10 in one list), or a whole category, like pet boarding.
-2. Optionally narrow it to a state and set the ad radius.
+2. Optionally narrow it to a state or a metro area (e.g. Austin-Round Rock-San Marcos) and set the ad radius.
 3. Optionally add your own locations: pick your chain, upload your store list (CSV with latitude/longitude), or both. By default Turf keeps only competitor locations **near yours**, where customers could switch to you; or flip it to **skip** those near yours so you don't pay to reach your own customers.
 4. Export a **Google Ads Editor** CSV (proximity targets, checked by importing into Editor) or a plain CSV for Meta and other tools.
 
@@ -30,6 +30,7 @@ I first considered an "opportunity score" (demand vs. competition by neighborhoo
 
 **Product choices:**
 - **"Only near mine" is the default.** I first built "skip near yours" (don't pay to reach your own customers), then reversed it: in geo-conquesting the valuable targets are competitor locations *close* to yours, where switching is realistic. A Planet Fitness 40 miles from your nearest gym is a wasted impression. Skip-near is still one click away.
+- **Metro areas come from the Census, not Overture.** Buyers plan by metro, and Overture has no metro boundaries, so Turf uses the Census Bureau's official metro/micro areas (pinned file), tagged to places by location.
 - **Store lists need coordinates.** Many brands aren't clean chains in Overture, so you can upload your own list, but Turf doesn't geocode addresses: that needs a paid service and would make results depend on its accuracy.
 - **Radius is limited to 1–50 mi**, Meta's US range, so one export works on both platforms.
 - **Overlapping circles aren't merged.** Both platforms accept overlaps, and merged circles get bigger and less precise.
@@ -38,7 +39,7 @@ I first considered an "opportunity score" (demand vs. competition by neighborhoo
 **Engineering choices:**
 - **Precompute offline, serve a read-only DuckDB file.** Queries take milliseconds, and there's no database server to run. Refreshing the data means rerunning the pipeline and uploading the file (about 5 minutes).
 - **No-build frontend.** Plain JavaScript and MapLibre, served by the same container, so there's one deploy.
-- **CI/CD:** every merge to `main` runs lint, strict typing, and 129 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back automatically if it fails. CI then drives the live site in a real browser, including an automated accessibility check (axe-core).
+- **CI/CD:** every merge to `main` runs lint, strict typing, and 137 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back automatically if it fails. CI then drives the live site in a real browser, including an automated accessibility check (axe-core).
 
 **Not built (yet):**
 - Live ad-platform API integration.
@@ -58,6 +59,7 @@ uv sync && uv run pytest -q
 R=2026-11-18.0
 uv run python scripts/extract_us.py --release $R
 uv run python scripts/extract_states.py --release $R
+uv run python scripts/extract_metros.py --release $R   # Census metro areas (not in Overture)
 uv run python scripts/build_chains.py --release $R
 uv run python scripts/build_serving_db.py --release $R
 TURF_DB=data/$R/turf.duckdb uv run uvicorn turf_app.api:app --reload

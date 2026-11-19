@@ -8,7 +8,8 @@
 set -euo pipefail
 
 REPO="${TURF_REPO:-iamandyn/turf}"
-SHA="${1:-$(git -C "$(dirname "$0")/.." rev-parse HEAD)}"
+# Full SHA: the API matches head_sha exactly, so a short one never finds the run.
+SHA="$(git -C "$(dirname "$0")/.." rev-parse "${1:-HEAD}")"
 API="https://api.github.com/repos/$REPO/actions"
 
 run_id=""

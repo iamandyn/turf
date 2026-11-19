@@ -196,3 +196,30 @@ def test_search_falls_back_to_any_word_when_phrase_has_no_match(client: TestClie
 def test_search_fallback_not_used_when_phrase_matches(client: TestClient) -> None:
     keys = [r["key"] for r in client.get("/api/search?q=planet%20fitness").json()]
     assert keys == ["planet fitness"]
+
+
+def test_metro_search_ranks_metros_and_matches_any_word(client: TestClient) -> None:
+    resp = client.get("/api/metros/search", params={"q": "round rock"})
+    assert resp.status_code == 200
+    (austin,) = resp.json()
+    assert austin["metro_code"] == "12420" and austin["kind"] == "metro"
+    assert austin["n_open"] > 0
+    min_lon, min_lat, max_lon, max_lat = austin["bounds"]
+    assert min_lon < max_lon and min_lat < max_lat
+
+
+def test_metros_without_places_are_not_served(client: TestClient) -> None:
+    assert client.get("/api/metros/search", params={"q": "empty micro"}).json() == []
+    assert client.get("/api/metros/99999").status_code == 404
+
+
+def test_get_metro(client: TestClient) -> None:
+    resp = client.get("/api/metros/41860")
+    assert resp.status_code == 200 and resp.json()["name"] == "San Francisco-Oakland-Fremont, CA"
+
+
+def test_chain_locations_by_metro(client: TestClient) -> None:
+    resp = client.get(
+        "/api/chains/dunkin/locations", params={"include_unverified": True, "metro": "12420"}
+    )
+    assert {loc["id"] for loc in resp.json()["locations"]} == {"dk1", "dk2"}

@@ -43,6 +43,18 @@
           <span>State</span>
           <select id="state-select"><option value="">All states</option></select>
         </label>
+        <div class="field">
+          <span id="metro-label">Or a metro area</span>
+          <div class="combo" id="metro-combo">
+            <input id="metro-input" type="search" autocomplete="off" spellcheck="false"
+                   placeholder="e.g. Austin, Dallas-Fort Worth"
+                   role="combobox" aria-expanded="false" aria-autocomplete="list"
+                   aria-controls="metro-results" aria-labelledby="metro-label">
+            <ul id="metro-results" class="combo-list" role="listbox" hidden></ul>
+          </div>
+          <div class="selected area" id="metro-selected" hidden></div>
+          <small>Census metro and micro areas; they can cross state lines.</small>
+        </div>
         <label class="field">
           <span>Ad radius around each location <output id="radius-out" for="radius">1 mi</output></span>
           <input id="radius" type="range" min="1" max="50" step="0.5" value="1">

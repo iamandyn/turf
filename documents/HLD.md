@@ -6,7 +6,7 @@
 
 Turf turns open Overture Maps data into **ad-ready location target lists for geo-conquesting**: showing ads to people near a competitor's locations.
 
-A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or a whole category (e.g. pet boarding: every such business, chains and independents), optionally a state and their own locations (their chain in Overture, an uploaded store list, or both), and gets the competitors' US locations as radius targets: by default only those near the user's own locations, where customers could switch, or alternatively all except those near them. Each target is a lat/lng plus a radius, and the list exports as a Google Ads Editor CSV or a generic CSV for Meta and other tools.
+A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or a whole category (e.g. pet boarding: every such business, chains and independents), optionally a state or metro area and their own locations (their chain in Overture, an uploaded store list, or both), and gets the competitors' US locations as radius targets: by default only those near the user's own locations, where customers could switch, or alternatively all except those near them. Each target is a lat/lng plus a radius, and the list exports as a Google Ads Editor CSV or a generic CSV for Meta and other tools.
 
 **Users:** media buyers and local marketers running location-based campaigns.
 
@@ -22,6 +22,7 @@ A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or 
 │        ▼                                                 │   │          ▼                    │
 │ extract_us.py ──► us_places.parquet  (18.3M US places)   │   │ Caddy (TLS, client IP)        │
 │ extract_states.py ► us_states.parquet (state polygons)   │   │          │ 127.0.0.1:8090     │
+│ extract_metros.py ► us_metros.parquet (Census metros)    │   │          │                    │
 │        │                                                 │   │          ▼                    │
 │        ▼                                                 │   │ Docker: turf container        │
 │ build_chains.py ─► places.parquet + chains.parquet       │   │   FastAPI (uvicorn, 2 workers)│
@@ -40,8 +41,8 @@ A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or 
 | Component | Responsibility | Tech |
 |---|---|---|
 | **Data pipeline** (`scripts/`, `src/turf_app/{normalize,chains,states,serving}.py`) | Extract US places and state boundaries from a pinned Overture release; normalize names, match places to chains, flag duplicates, fill missing states; write the serving database | Python 3.12, DuckDB (+ spatial, httpfs) |
-| **API** (`src/turf_app/api.py`, `targets.py`, `ratelimit.py`) | Search, chain locations, target lists filtered by distance to your locations, CSV export; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
-| **Frontend** (`src/turf_app/web/`) | One page: competitor search (several chains or a category), state/radius/unverified controls, your locations (chain and/or CSV upload, only-near or skip-near), map with layer toggles, target and skipped lists, sticky results and export bar, shareable URLs | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap; served by FastAPI |
+| **API** (`src/turf_app/api.py`, `targets.py`, `ratelimit.py`) | Search (chains, categories, metro areas), chain locations, target lists filtered by area and by distance to your locations, CSV export; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
+| **Frontend** (`src/turf_app/web/`) | One page: competitor search (several chains or a category), state or metro area, radius/unverified controls, your locations (chain and/or CSV upload, only-near or skip-near), map with layer toggles, target and skipped lists, sticky results and export bar, shareable URLs | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap; served by FastAPI |
 | **Container** (`Dockerfile`, `deploy/docker-compose.yml`) | Immutable image per commit; data mounted read-only | Docker, Compose |
 | **Edge** (`deploy/Caddyfile.snippet`) | TLS, reverse proxy, real client IP from Cloudflare | Cloudflare proxy, Caddy |
 | **CI/CD** (`.github/workflows/ci.yml`, `scripts/server_deploy.sh`) | Lint, type-check, test; build and push image; deploy with health check and automatic rollback; public smoke test | GitHub Actions, GHCR, SSH forced command |

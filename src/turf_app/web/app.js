@@ -26,6 +26,7 @@ const state = {
   uploaded: null,     // { fileName, locations: [{name, lat, lon}] } from an uploaded CSV
   ownFilter: "only_near",
   usState: "",
+  metro: null,        // { kind: "metro", key: CBSA code, display_name, detail, n_open, bounds }
   radiusMi: 1,
   ownRadiusMi: DEFAULT_OWN_RADIUS.only_near,
   unverified: false,
@@ -75,6 +76,7 @@ function targetRequest() {
     radius_mi: state.radiusMi,
     include_unverified: state.unverified,
     states: state.usState ? [state.usState] : null,
+    metros: state.metro ? [state.metro.key] : null,
     own_chain_key: state.own ? state.own.key : null,
     own_locations: state.uploaded ? state.uploaded.locations : null,
     own_filter: state.ownFilter,
@@ -197,8 +199,8 @@ function downloadTemplate() {
 
 // ---------- Chain search (accessible combobox) ----------
 
-// kind(): null for chains and categories, "chain" for chains only.
-function setupCombo(inputId, listId, kind, onPick) {
+// search(q) resolves to items ({kind, key, display_name, detail, n_open, ...}).
+function setupCombo(inputId, listId, search, onPick, noneText) {
   const input = $(inputId);
   const list = $(listId);
   let items = [];
@@ -218,7 +220,7 @@ function setupCombo(inputId, listId, kind, onPick) {
     if (!items.length) {
       const li = document.createElement("li");
       li.className = "none";
-      li.textContent = kind() === "chain" ? "No chains found. Try a shorter name." : "Nothing found. Try a shorter name.";
+      li.textContent = typeof noneText === "function" ? noneText() : noneText;
       list.append(li);
     }
     items.forEach((c, i) => {
@@ -230,11 +232,7 @@ function setupCombo(inputId, listId, kind, onPick) {
       name.textContent = c.display_name;
       const meta = document.createElement("span");
       meta.className = "meta";
-      // Chains show their main category, so similar names ("Orangetheory" the gym
-      // vs. a store) can be told apart.
-      meta.textContent = c.kind === "category"
-        ? `every business in category · ${fmt.format(c.n_open)} open`
-        : [c.detail && c.detail.replaceAll("_", " "), `${fmt.format(c.n_open)} open`].filter(Boolean).join(" · ");
+      meta.textContent = optionMeta(c);
       li.append(name, meta);
       li.addEventListener("mousedown", (e) => { e.preventDefault(); pick(i); });
       list.append(li);
@@ -259,8 +257,7 @@ function setupCombo(inputId, listId, kind, onPick) {
     timer = setTimeout(async () => {
       const mine = ++seq;
       try {
-        const results = await getJson(
-          `/api/search?q=${encodeURIComponent(q)}&limit=8` + (kind() ? `&kind=${kind()}` : ""));
+        const results = await search(q);
         if (mine !== seq) return;
         items = results;
         active = items.length ? 0 : -1;
@@ -298,9 +295,11 @@ function renderSelectedInto(box, chain, onClear) {
   meta.className = "meta";
   const unverified = chain.n_total - chain.n_open;
   const kindLabel = chain.kind === "category" ? "Every business in this category · " : "";
-  meta.textContent = kindLabel + `${fmt.format(chain.n_open)} open` +
-    (unverified ? ` · ${fmt.format(unverified)} unverified` : "") +
-    (chain.kind === "chain" && chain.detail ? ` · ${chain.detail.replaceAll("_", " ")}` : "");
+  meta.textContent = chain.kind === "metro"
+    ? `Census ${chain.detail} area · ${fmt.format(chain.n_total)} places`
+    : kindLabel + `${fmt.format(chain.n_open)} open` +
+      (unverified ? ` · ${fmt.format(unverified)} unverified` : "") +
+      (chain.kind === "chain" && chain.detail ? ` · ${chain.detail.replaceAll("_", " ")}` : "");
   text.append(name, meta);
   const clear = document.createElement("button");
   clear.type = "button";
@@ -332,6 +331,32 @@ function renderUploaded() {
   clear.addEventListener("click", () => { state.uploaded = null; $("own-file").value = ""; update(); });
   box.append(text, clear);
   box.hidden = false;
+}
+
+function optionMeta(c) {
+  if (c.kind === "category") return `every business in category · ${fmt.format(c.n_open)} open`;
+  if (c.kind === "metro") return `${c.detail} area · ${fmt.format(c.n_total)} places`;
+  // Chains show their main category, so similar names ("Orangetheory" the gym
+  // vs. a store) can be told apart.
+  return [c.detail && c.detail.replaceAll("_", " "), `${fmt.format(c.n_open)} open`].filter(Boolean).join(" · ");
+}
+
+const searchAll = (kind) => (q) =>
+  getJson(`/api/search?q=${encodeURIComponent(q)}&limit=8` + (kind ? `&kind=${kind}` : ""));
+
+const toMetroItem = (m) => ({
+  kind: "metro", key: m.metro_code, display_name: m.name, detail: m.kind,
+  n_open: m.n_open, n_total: m.n_total, bounds: m.bounds,
+});
+const searchMetros = async (q) =>
+  (await getJson(`/api/metros/search?q=${encodeURIComponent(q)}&limit=8`)).map(toMetroItem);
+
+function pickMetro(m) {
+  state.metro = m;
+  state.usState = "";
+  $("state-select").value = "";
+  update({ fit: true });
+  if (!state.targets.length) map.fitBounds(m.bounds, { padding: 40, duration: 600 });
 }
 
 function renderTargets() {
@@ -615,7 +640,8 @@ async function refresh({ fit = false } = {}) {
     map.getSource("own").setData(toFeatures(ownRows, { kind: "own", radius_m: state.ownRadiusMi * METERS_PER_MILE }));
 
     $("n-targets").textContent = fmt.format(result.targets.length);
-    const where = state.usState ? ` in ${STATES.find(([c]) => c === state.usState)[1]}` : " in the US";
+    const where = state.metro ? ` in the ${state.metro.display_name} area`
+      : state.usState ? ` in ${STATES.find(([c]) => c === state.usState)[1]}` : " in the US";
     const parts = [`${targetLabel()}${where}, ${state.radiusMi} mi radius`];
     if (hasOwn()) {
       parts.push(state.ownFilter === "only_near"
@@ -629,7 +655,7 @@ async function refresh({ fit = false } = {}) {
     if (!$("campaign").value) $("campaign").placeholder = `Turf - ${defaultCampaignKey()}`;
     if (result.targets.length === 0) {
       showError(!result.candidates
-        ? "No locations match. Try all states or include unverified locations."
+        ? "No locations match. Try a wider area or include unverified locations."
         : state.ownFilter === "only_near"
           ? `None are within ${state.ownRadiusMi} mi of your locations. Widen the distance, or switch to "Skip near mine".`
           : "Every location is near one of yours. Lower the skip distance to keep some.");
@@ -664,7 +690,7 @@ async function ownLocations() {
   const rows = [];
   if (state.own) {
     const res = await getJson(`/api/chains/${encodeURIComponent(state.own.key)}/locations?include_unverified=true` +
-      (state.usState ? `&state=${state.usState}` : ""));
+      (state.usState ? `&state=${state.usState}` : "") + (state.metro ? `&metro=${state.metro.key}` : ""));
     rows.push(...res.locations);
   }
   if (state.uploaded) {
@@ -724,6 +750,7 @@ function syncUrl() {
     if (state.ownRadiusMi !== DEFAULT_OWN_RADIUS[state.ownFilter]) p.set("d", String(state.ownRadiusMi));
   }
   if (state.usState) p.set("state", state.usState);
+  if (state.metro) p.set("metro", state.metro.key);
   if (state.radiusMi !== 1) p.set("r", String(state.radiusMi));
   if (state.unverified) p.set("unverified", "1");
   const qs = p.toString();
@@ -755,6 +782,10 @@ async function restoreFromUrl() {
       state.targets = (await Promise.all(keys.map((k) => lookup("chain", k)))).filter(Boolean);
     }
     if (p.get("own")) state.own = await lookup("chain", p.get("own"));
+    const metro = p.get("metro");
+    if (metro && /^[0-9]{5}$/.test(metro) && !state.usState) {
+      state.metro = toMetroItem(await getJson(`/api/metros/${metro}`));
+    }
   } catch (err) {
     showError(err.message);
   }
@@ -777,6 +808,8 @@ function updateOutputs() {
   $("own-mode").hidden = !hasOwn();
   renderTargets();
   renderSelected("own-selected", state.own, () => { state.own = null; update(); });
+  renderSelected("metro-selected", state.metro, () => { state.metro = null; update({ fit: true }); $("metro-input").focus(); });
+  $("metro-combo").hidden = Boolean(state.metro);
   renderUploaded();
 }
 
@@ -795,12 +828,14 @@ function init() {
   for (const [code, name] of STATES) select.add(new Option(name, code));
 
   // Once a chain is picked, the search only offers more chains.
-  setupCombo("target-input", "target-results", () => (state.targets.length ? "chain" : null), addTarget);
-  setupCombo("own-input", "own-results", () => "chain", (c) => {
+  setupCombo("target-input", "target-results", (q) => searchAll(state.targets.length ? "chain" : null)(q), addTarget,
+    () => (state.targets.length ? "No chains found. Try a shorter name." : "Nothing found. Try a shorter name."));
+  setupCombo("metro-input", "metro-results", searchMetros, pickMetro, "No metro areas found. Try a city name.");
+  setupCombo("own-input", "own-results", searchAll("chain"), (c) => {
     if (state.targets.some((t) => t.key === c.key)) { showError(`${c.display_name} is already a competitor in step 1.`); return; }
     state.own = c;
     update();
-  });
+  }, "No chains found. Try a shorter name.");
   $("own-file").addEventListener("change", (e) => onUpload(e.target.files[0]));
   $("own-template").addEventListener("click", downloadTemplate);
   document.querySelectorAll('input[name="own-filter"]').forEach((r) => r.addEventListener("change", (e) => {
@@ -826,7 +861,11 @@ function init() {
   $("radius").addEventListener("input", (e) => { state.radiusMi = Number(e.target.value); updateOutputs(); slow(); });
   $("own-radius").addEventListener("input", (e) => { state.ownRadiusMi = Number(e.target.value); updateOutputs(); slow(); });
   $("unverified").addEventListener("change", (e) => { state.unverified = e.target.checked; update(); });
-  select.addEventListener("change", (e) => { state.usState = e.target.value; update({ fit: true }); });
+  select.addEventListener("change", (e) => {
+    state.usState = e.target.value;
+    if (state.usState) state.metro = null;  // one area at a time: a state or a metro
+    update({ fit: true });
+  });
   document.querySelectorAll(".export button[data-format]").forEach((b) =>
     b.addEventListener("click", () => exportCsv(b.dataset.format, b)));
 

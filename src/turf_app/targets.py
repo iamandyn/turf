@@ -28,6 +28,9 @@ MIN_RADIUS_MI = 1.0
 MAX_RADIUS_MI = 50.0
 
 StateCode = Annotated[str, Field(pattern="^[A-Za-z]{2}$")]
+# Census CBSA code, e.g. 12420 (Austin-Round Rock-San Marcos, TX).
+MetroCode = Annotated[str, Field(pattern="^[0-9]{5}$")]
+MAX_METROS = 10
 
 
 class ExportFormat(StrEnum):
@@ -87,6 +90,11 @@ class TargetRequest(BaseModel):
     radius_mi: float = Field(default=1.0, ge=MIN_RADIUS_MI, le=MAX_RADIUS_MI)
     include_unverified: bool = False
     states: list[StateCode] | None = Field(default=None, max_length=51)
+    metros: list[MetroCode] | None = Field(
+        default=None,
+        max_length=MAX_METROS,
+        description="Census metro/micro area codes (CBSA), e.g. 12420; combine with states",
+    )
     own_chain_key: str | None = Field(default=None, description="Your own chain in Overture")
     own_locations: list[OwnLocation] | None = Field(
         default=None,
@@ -115,6 +123,11 @@ class TargetRequest(BaseModel):
     @classmethod
     def _upper_states(cls, v: list[str] | None) -> list[str] | None:
         return sorted({s.upper() for s in v}) if v else None
+
+    @field_validator("metros")
+    @classmethod
+    def _dedupe_metros(cls, v: list[str] | None) -> list[str] | None:
+        return sorted(set(v)) if v else None
 
     @model_validator(mode="after")
     def _check(self) -> TargetRequest:
@@ -181,6 +194,7 @@ class Dropped(BaseModel):
 class TargetResponse(BaseModel):
     chain_keys: list[str] | None
     category: str | None
+    metros: list[str] | None
     radius_mi: float
     own_filter: OwnFilter | None
     own_radius_mi: float | None
@@ -199,11 +213,15 @@ class UnknownCategoryError(LookupError):
     pass
 
 
+class UnknownMetroError(LookupError):
+    pass
+
+
 class TooManyTargetsError(ValueError):
     def __init__(self, count: int) -> None:
         super().__init__(
             f"That's {count:,} locations, more than the {MAX_TARGETS:,} limit for one list. "
-            "Pick a state to narrow it down."
+            "Pick a state or metro area to narrow it down."
         )
         self.count = count
 
@@ -220,6 +238,11 @@ def _check_chain(db: duckdb.DuckDBPyConnection, chain_key: str) -> None:
         raise UnknownChainError(chain_key)
 
 
+def _check_metro(db: duckdb.DuckDBPyConnection, code: str) -> None:
+    if db.execute("SELECT 1 FROM metros WHERE metro_code = ?", [code]).fetchone() is None:
+        raise UnknownMetroError(code)
+
+
 def _check_category(db: duckdb.DuckDBPyConnection, category: str) -> None:
     row = db.execute("SELECT 1 FROM categories WHERE category_key = ?", [category]).fetchone()
     if row is None:
@@ -233,6 +256,7 @@ _CANDIDATE_FILTER = """
     AND ($category IS NULL OR category = $category)
     AND ($unverified OR status = 'open')
     AND ($states IS NULL OR list_contains($states, state))
+    AND ($metros IS NULL OR list_contains($metros, metro))
     AND ($own IS NULL OR chain_key IS DISTINCT FROM $own)
 """
 
@@ -260,12 +284,15 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
         _check_category(db, req.category)
     if req.own_chain_key:
         _check_chain(db, req.own_chain_key)
+    for code in req.metros or []:
+        _check_metro(db, code)
 
     filters: dict[str, object] = {
         "chains": req.chain_keys,
         "category": req.category,
         "unverified": req.include_unverified,
         "states": req.states,
+        "metros": req.metros,
         "own": req.own_chain_key,
     }
     count_row = db.execute(
@@ -360,6 +387,7 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
     return TargetResponse(
         chain_keys=req.chain_keys,
         category=req.category,
+        metros=req.metros,
         radius_mi=req.radius_mi,
         own_filter=req.own_filter if req.has_own else None,
         own_radius_mi=own_radius if req.has_own else None,

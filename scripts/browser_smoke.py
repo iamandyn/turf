@@ -3,7 +3,7 @@
 Fails on any console error, page error, CSP violation, or accessibility
 violation (axe-core), and walks the main flow: pick a competitor, add a second
 one, add your own chain (only near it, then skip near it), check the results,
-export both CSV formats, reload from the shareable URL, open an old-style link,
+export both CSV formats, reload from the shareable URL, open an old-style link, pick a metro area,
 upload a store list, and toggle map layers. Saves screenshots.
 
 Usage:
@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("--chain2", default="Anytime Fitness", help="second competitor")
     parser.add_argument("--own", default="Planet Fitness", help="text typed into your chain box")
     parser.add_argument("--state", default="TX")
+    parser.add_argument("--metro", default="Austin", help="text typed into the metro box")
     args = parser.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -189,6 +190,27 @@ def main() -> None:
             problems,
         )
         cat.screenshot(path=str(out / "04-category.png"))
+
+        # 6b. A metro area instead of a state; it lands in the shareable URL.
+        metro = browser.new_page(viewport={"width": 1400, "height": 900})
+        metro.on("console", on_console)
+        metro.goto(f"{args.base_url}/?chain={chain_q}", wait_until="networkidle")
+        metro.wait_for_selector("#summary:not([hidden])", timeout=15_000)
+        wait_idle(metro)
+        n_us = count(metro)
+        metro.fill("#metro-input", args.metro)
+        metro.wait_for_selector("#metro-results li[role=option]", timeout=10_000)
+        metro.keyboard.press("Enter")
+        metro.wait_for_selector("#metro-selected:not([hidden])")
+        wait_idle(metro)
+        n_metro, detail = count(metro), metro.inner_text("#summary-detail")
+        check(
+            0 < n_metro < n_us and args.metro.lower() in detail.lower() and "metro=" in metro.url,
+            f"{args.metro} metro: {n_metro} of {n_us} ({detail[:60]}…)",
+            problems,
+        )
+        metro.wait_for_timeout(1000)  # let the map finish zooming to the metro
+        metro.screenshot(path=str(out / "06-metro.png"))
 
         # 7. Phone layout.
         phone = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True)

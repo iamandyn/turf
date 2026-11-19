@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Turf · Geo-conquesting target lists</title>
-  <meta name="description" content="Geo-conquesting target lists for media buyers: pick a client's competitors and get ad-ready radius targets around their locations near the client's stores, from open Overture Maps data.">
+  <title>Turf · Find your next markets</title>
+  <meta name="description" content="Market selection for consumer brands: find US metro areas that look like your best markets, from open Overture Maps places data and Census population.">
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/vendor/maplibre-gl-4.7.1/maplibre-gl.css">
   <link rel="stylesheet" href="/styles.css">
@@ -13,161 +13,116 @@
 </head>
 <body>
   <div class="app">
-    <aside class="panel" aria-label="Target list builder">
+    <aside class="panel" aria-label="Market finder">
       <header class="brand">
         <h1><span class="logo" aria-hidden="true"></span>Turf</h1>
         <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false" aria-label="Dark mode" title="Dark mode">
           <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
           <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         </button>
-        <p class="tagline">Geo-conquesting target lists: ads around your competitors' locations, near your stores.</p>
+        <p class="tagline">Find the next US metros for a brand's ad spend: places that look like its best markets.</p>
       </header>
 
       <section class="step" aria-labelledby="step1-title">
-        <h2 id="step1-title"><span class="num">1</span> Who to target</h2>
-        <ul class="selected-list" id="target-selected" aria-label="Chosen competitors" hidden></ul>
-        <div class="combo" data-role="target-search" id="target-combo">
-          <label for="target-input" class="sr-only">Competitor chain or category</label>
-          <input id="target-input" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="A competitor chain or a category"
-                 role="combobox" aria-expanded="false" aria-autocomplete="list"
-                 aria-controls="target-results" aria-describedby="target-hint">
-          <ul id="target-results" class="combo-list" role="listbox" hidden></ul>
-        </div>
-        <p class="hint" id="target-hint" hidden></p>
-        <label class="check" id="only-new-field" hidden>
-          <input id="only-new" type="checkbox">
-          <span>Only locations added since the <span id="previous-date">last</span> data
-            <small>To update a campaign you built last month: export just these. Some are openings; many are places newly added to Overture.</small>
-          </span>
-        </label>
-        <div class="examples" id="examples">
-          <span>Try:</span>
-          <button type="button" data-key="orangetheory fitness">Orangetheory Fitness</button>
-          <button type="button" data-key="planet fitness">Planet Fitness</button>
-          <button type="button" data-kind="category" data-key="pet_boarding">All pet boarding &amp; daycare</button>
+        <h2 id="step1-title"><span class="num">1</span> Who's the audience</h2>
+        <div class="presets" id="presets" role="radiogroup" aria-labelledby="step1-title"></div>
+        <div class="signals" id="signals-block" hidden>
+          <span class="field-label" id="signals-label">Signals <small>Local businesses whose share hints at this audience</small></span>
+          <ul class="chips" id="signal-chips" aria-labelledby="signals-label"></ul>
+          <div class="combo">
+            <input id="signal-input" type="search" autocomplete="off" spellcheck="false"
+                   placeholder="Add a signal, e.g. yoga studio"
+                   role="combobox" aria-expanded="false" aria-autocomplete="list"
+                   aria-controls="signal-results" aria-label="Add a signal">
+            <ul id="signal-results" class="combo-list" role="listbox" hidden></ul>
+          </div>
+          <label class="check">
+            <input id="growth" type="checkbox">
+            <span>Population growth as a signal
+              <small>Census estimates, 2020 to 2025.</small>
+            </span>
+          </label>
         </div>
       </section>
 
       <section class="step" aria-labelledby="step2-title">
-        <h2 id="step2-title"><span class="num">2</span> Where and how wide</h2>
-        <div class="field">
-          <span id="area-label">Where</span>
-          <ul class="chips" id="area-selected" aria-label="Chosen areas" hidden></ul>
-          <div class="combo" id="area-combo">
-            <input id="area-input" type="search" autocomplete="off" spellcheck="false"
-                   placeholder="All of the US. Type a state or metro area"
-                   role="combobox" aria-expanded="false" aria-autocomplete="list"
-                   aria-controls="area-results" aria-labelledby="area-label">
-            <ul id="area-results" class="combo-list" role="listbox" hidden></ul>
-          </div>
-          <small>States and Census metro areas (which can cross state lines). Pick several to combine them.</small>
+        <h2 id="step2-title"><span class="num">2</span> Best markets today <em>optional</em></h2>
+        <p class="hint">The metros where the brand already performs best, from its ad account. Turf finds others that look like them. Leave empty to rank by signal strength.</p>
+        <ul class="chips" id="seed-chips" aria-label="Seed metros" hidden></ul>
+        <div class="combo" id="seed-combo">
+          <input id="seed-input" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="e.g. Denver, Austin"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="seed-results" aria-label="Add a best-performing metro">
+          <ul id="seed-results" class="combo-list" role="listbox" hidden></ul>
         </div>
+      </section>
+
+      <section class="step" aria-labelledby="step3-title">
+        <h2 id="step3-title"><span class="num">3</span> Which metros to compare</h2>
         <label class="field">
-          <span>Ad radius around each location <output id="radius-out" for="radius">1 mi</output></span>
-          <input id="radius" type="range" min="1" max="50" step="0.5" value="1">
-          <small>Meta allows 1–50 mi in the US, so exports work on both platforms.</small>
+          <span>Minimum population</span>
+          <select id="min-pop">
+            <option value="100000">100,000+</option>
+            <option value="250000" selected>250,000+</option>
+            <option value="500000">500,000+</option>
+            <option value="1000000">1 million+</option>
+          </select>
         </label>
         <label class="check">
-          <input id="unverified" type="checkbox">
-          <span>Include unverified locations
-            <small>No recent activity signal in Overture; some may be closed.</small>
+          <input id="micro" type="checkbox">
+          <span>Include micropolitan areas
+            <small>Smaller Census areas around towns of 10,000 to 50,000.</small>
           </span>
         </label>
       </section>
 
-      <section class="step" aria-labelledby="step3-title">
-        <h2 id="step3-title"><span class="num">3</span> Your locations <em>optional</em></h2>
-        <p class="hint">Focus on competitors near your stores, where their customers could switch to you. Or skip them, so you don't pay to reach your own customers.</p>
-        <div class="combo" data-role="own-search">
-          <label for="own-input" class="sr-only">Your chain</label>
-          <input id="own-input" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="Your chain, e.g. Planet Fitness"
-                 role="combobox" aria-expanded="false" aria-autocomplete="list"
-                 aria-controls="own-results">
-          <ul id="own-results" class="combo-list" role="listbox" hidden></ul>
-        </div>
-        <div class="selected own" id="own-selected" hidden></div>
-        <div class="upload">
-          <span>or</span>
-          <input id="own-file" class="sr-only" type="file" accept=".csv,.tsv,.txt,text/csv">
-          <label class="file-button" for="own-file">Upload your store list (CSV)</label>
-          <button type="button" class="link" id="own-template">Example file</button>
-        </div>
-        <small class="upload-help">Needs latitude and longitude columns; a name column is optional. Addresses alone aren't geocoded.</small>
-        <div class="selected own" id="upload-selected" hidden></div>
-        <p class="error" id="upload-error" role="alert" hidden></p>
-        <fieldset class="mode" id="own-mode" hidden>
-          <legend class="sr-only">How to use your locations</legend>
-          <label class="radio">
-            <input type="radio" name="own-filter" value="only_near" checked>
-            <span>Only near mine <small>Competitor locations close enough that customers could switch to you.</small></span>
-          </label>
-          <label class="radio">
-            <input type="radio" name="own-filter" value="skip_near">
-            <span>Skip near mine <small>Don't reach people who are already your customers.</small></span>
-          </label>
-        </fieldset>
-        <label class="field" id="own-radius-field" hidden>
-          <span><span id="own-radius-label">Within</span> <output id="own-radius-out" for="own-radius">3 mi</output></span>
-          <input id="own-radius" type="range" min="0.5" max="25" step="0.5" value="3">
-        </label>
-      </section>
-
-      <section class="list" id="list-section" hidden aria-labelledby="list-title">
-        <h2 id="list-title">Locations</h2>
-        <ol id="target-list"></ol>
-        <p class="more" id="list-more" hidden></p>
-        <details class="dropped" id="gone-section" hidden>
-          <summary id="gone-title">Gone</summary>
-          <ol id="gone-list"></ol>
-          <p class="more" id="gone-more" hidden></p>
-        </details>
-        <details class="dropped" id="dropped-section" hidden>
-          <summary id="dropped-title">Skipped</summary>
-          <ol id="dropped-list"></ol>
-          <p class="more" id="dropped-more" hidden></p>
-        </details>
+      <section class="list" id="results-section" hidden aria-labelledby="results-title">
+        <h2 id="results-title">Results</h2>
+        <ol id="results" class="results"></ol>
       </section>
 
       <footer class="foot">
-        <p>Data: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a>, release <span id="release">…</span>.
+        <p>Data: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a> places, release <span id="release">…</span>; US Census Bureau metro areas and population estimates.
           Basemap © <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.</p>
         <p><a href="https://github.com/iamandyn/turf" target="_blank" rel="noopener">Source</a> · <a href="/docs" target="_blank" rel="noopener">API</a></p>
       </footer>
       <section class="actionbar" aria-live="polite" aria-label="Results and export">
-        <p class="empty" id="empty-state">Pick a competitor chain, or a category to target every business of that kind.</p>
+        <p class="empty" id="empty-state">Pick an audience to rank US metro areas.</p>
         <div id="summary" hidden>
-          <p class="big"><strong id="n-targets">0</strong> targets</p>
+          <p class="big"><strong id="n-results">0</strong> <span id="summary-unit">metros</span></p>
           <p class="sub" id="summary-detail"></p>
         </div>
         <p class="error" id="error" role="alert" hidden></p>
         <div class="export" id="export" hidden>
           <div class="buttons">
-            <button type="button" class="primary" data-format="google_ads_editor">Google Ads Editor CSV</button>
-            <button type="button" data-format="generic">CSV for Meta &amp; others</button>
+            <button type="button" class="primary" data-format="zips">ZIP codes for Meta &amp; Google</button>
+            <button type="button" data-format="metros">Metro list CSV</button>
           </div>
           <details>
-            <summary>Campaign name &amp; upload help</summary>
-            <label class="field">
-              <span>Campaign name (Google Ads Editor)</span>
-              <input id="campaign" type="text" maxlength="200">
-            </label>
-            <p><strong>Google Ads Editor:</strong> set the campaign name above to an existing campaign. Then either paste via Keywords and targeting → Locations → Make multiple changes ("My data includes columns for campaigns"), or use File → Import and choose <em>Use selected accounts</em> (the file has no account column).</p>
-            <p><strong>Meta Ads Manager:</strong> Meta has no documented bulk radius upload; the generic CSV has addresses and coordinates to add as locations, each with the radius shown.</p>
+            <summary>How to use the exports</summary>
+            <p><strong>ZIP codes:</strong> every ZIP in the ranked metros, one per row. Meta and Google Ads both accept US ZIP lists in their bulk location boxes; neither targets Census metro areas directly.</p>
+            <p><strong>Metro list:</strong> the ranking with each metro's strongest signals, for a media plan or a client deck.</p>
           </details>
         </div>
       </section>
     </aside>
 
     <main class="map-wrap">
-      <div id="map" role="region" aria-label="Map of target locations"></div>
+      <div id="map" role="region" aria-label="Map of ranked metro areas"></div>
       <div class="legend" role="group" aria-label="Map layers">
-        <button type="button" aria-pressed="true" data-layer="targets"><i class="dot target"></i>Targets</button>
-        <button type="button" aria-pressed="true" data-layer="dropped" hidden><i class="dot excluded"></i><span id="legend-dropped">Skipped</span></button>
-        <button type="button" aria-pressed="true" data-layer="own" hidden><i class="dot own"></i>Yours</button>
+        <button type="button" aria-pressed="true" data-layer="results"><i class="dot target"></i>Ranked</button>
+        <button type="button" aria-pressed="true" data-layer="seeds" hidden><i class="dot own"></i>Best today</button>
       </div>
-      <p class="zoom-hint" id="zoom-hint" hidden>Zoom in to see each target's ad radius</p>
+      <aside class="detail" id="detail" hidden aria-labelledby="detail-title">
+        <button type="button" class="detail-close" id="detail-close" aria-label="Close details">×</button>
+        <p class="detail-rank" id="detail-rank"></p>
+        <h2 id="detail-title"></h2>
+        <p class="detail-meta" id="detail-meta"></p>
+        <h3>Signals vs. the typical metro</h3>
+        <ul class="bars" id="detail-signals"></ul>
+        <div id="detail-brief"></div>
+      </aside>
       <div class="loading" id="loading" hidden>Loading…</div>
     </main>
   </div>

@@ -105,16 +105,16 @@ jobs:
           meta="$(curl -sf --retry 5 --retry-delay 3 --retry-all-errors "$base/api/meta")"
           echo "$meta"
           jq -e --arg sha "$GITHUB_SHA" '.commit == $sha' <<<"$meta"
-          curl -sf "$base/api/chains/search?q=starbucks" | jq -e '.[0].chain_key == "starbucks"'
-          curl -sf -X POST "$base/api/targets" -H 'content-type: application/json' \
-            -d '{"chain_keys":["orangetheory fitness"],"states":["TX"]}' | jq -e '.targets | length > 0'
+          curl -sf "$base/api/metros/search?q=austin" | jq -e '.[0].metro_code == "12420"'
+          curl -sf -X POST "$base/api/markets" -H 'content-type: application/json' \
+            -d '{"preset":"pets","seeds":["19740"]}' | jq -e '.mode == "lookalike" and (.results | length) == 25'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: "0.13.9"
           python-version: "3.12"
           enable-cache: true
-      - name: Browser test of the live site (search, your locations, upload, export, shareable URL, accessibility, phone layout)
+      - name: Browser test of the live site (presets, signals, lookalikes, details, exports, shareable URL, dark mode, accessibility, phone)
         run: |
           uv sync --frozen
           uv run playwright install --with-deps chromium

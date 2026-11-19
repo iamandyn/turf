@@ -1,11 +1,11 @@
 """End-to-end browser check of the Turf frontend (headless Chromium via Playwright).
 
 Fails on any console error, page error, CSP violation, or accessibility
-violation (axe-core), and walks the main flow: pick a competitor, add a second
-one, add your own chain (only near it, then skip near it), check the results,
-export both CSV formats, reload from the shareable URL, open an old-style link,
-upload a store list, toggle map layers, pick a metro area, combine areas, show
-only locations added since the last data release, and switch to dark mode. Saves screenshots.
+violation (axe-core), and walks the main flow: pick an audience preset, edit
+its signals, add best-performing metros, read a metro's details and brief,
+export both CSVs, reload from the shareable URL, change the population filter,
+toggle map layers, switch to dark mode, and check the phone layout. Saves
+screenshots.
 
 Usage:
     uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000
@@ -23,21 +23,15 @@ import sys
 from pathlib import Path
 
 from axe_playwright_python.sync_playwright import Axe
-from playwright.sync_api import ConsoleMessage, FilePayload, Page, sync_playwright
-
-# Downtown and north Austin, for the store list upload.
-STORE_LIST = b"name,latitude,longitude\nDowntown,30.2672,-97.7431\nNorth,30.4021,-97.7253\n"
+from playwright.sync_api import ConsoleMessage, Page, sync_playwright
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--out", default="data/screenshots", help="screenshot directory")
-    parser.add_argument("--chain", default="orangetheory fitness")
-    parser.add_argument("--chain2", default="Anytime Fitness", help="second competitor")
-    parser.add_argument("--own", default="Planet Fitness", help="text typed into your chain box")
-    parser.add_argument("--state", default="TX", help="text typed into the Where field")
-    parser.add_argument("--metro", default="Austin", help="text typed into the metro box")
+    parser.add_argument("--preset", default="pets")
+    parser.add_argument("--seeds", default="Denver,Austin", help="text typed into the seed box")
     args = parser.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -47,218 +41,142 @@ def main() -> None:
         if msg.type == "error":
             problems.append(f"console error: {msg.text}")
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        page = browser.new_page(viewport={"width": 1400, "height": 900}, accept_downloads=True)
+    def new_page(width: int = 1400, height: int = 900, **kw: object) -> Page:
+        page = browser.new_page(viewport={"width": width, "height": height}, **kw)  # type: ignore[arg-type]
         page.on("console", on_console)
         page.on("pageerror", lambda e: problems.append(f"page error: {e}"))
+        return page
 
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = new_page(accept_downloads=True)
         page.goto(args.base_url, wait_until="networkidle")
         page.wait_for_selector("#map canvas", timeout=15_000)
+        page.wait_for_selector(".preset", timeout=10_000)
+        n_presets = page.locator(".preset").count()
         check(
-            page.locator("#empty-state").is_visible(), "empty state shown on first load", problems
+            page.locator("#empty-state").is_visible() and n_presets == 6,
+            f"empty state with {n_presets} audience presets",
+            problems,
         )
         page.screenshot(path=str(out / "01-empty.png"))
 
-        # 1. Competitor via search (types, waits for the list, presses Enter).
-        page.fill("#target-input", args.chain[:8])
-        page.wait_for_selector("#target-results li[role=option]", timeout=10_000)
-        first = page.locator("#target-results li[role=option]").first.inner_text()
-        page.keyboard.press("Enter")
-        page.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        print(f"search picked: {first.splitlines()[0]}")
-
-        # 2. Narrow to a state, widen the radius.
-        area(page, args.state)
-        page.locator("#radius").fill("3")
-        wait_idle(page)
-        n_one = count(page)
-        check(n_one > 0, f"targets in {args.state}: {n_one}", problems)
-        check(page.locator("#zoom-hint").is_visible(), "zoom hint shown at state zoom", problems)
-
-        # 2b. A second competitor in the same list.
-        page.fill("#target-input", args.chain2)
-        page.wait_for_selector("#target-results li[role=option]", timeout=10_000)
-        page.keyboard.press("Enter")
-        page.wait_for_function("document.querySelectorAll('#target-selected li').length === 2")
-        wait_idle(page)
-        n_all = count(page)
-        check(n_all > n_one, f"with {args.chain2} added: {n_all}", problems)
-
-        # 3. Your own chain: only near it (the default), then skip near it.
-        page.fill("#own-input", args.own)
-        page.wait_for_selector("#own-results li[role=option]", timeout=10_000)
-        page.keyboard.press("Enter")
-        page.wait_for_selector("#own-selected:not([hidden])")
-        wait_idle(page)
-        n_near = count(page)
-        detail = page.inner_text("#summary-detail")
+        # 1. A preset ranks metros by signal strength.
+        page.click(f'.preset[data-key="{args.preset}"]')
+        wait_results(page)
+        n_signals = page.locator("#signal-chips li").count()
         check(
-            0 < n_near < n_all and "only within 3 mi" in detail,
-            f"only near {args.own}: {n_near} ({detail})",
+            count(page) == 25
+            and n_signals > 0
+            and "Strongest" in (page.text_content("#results-title") or ""),
+            f"{args.preset} preset: {count(page)} metros, {n_signals} signals",
             problems,
         )
-        page.check('input[name="own-filter"][value="skip_near"]')
-        wait_idle(page)
-        n_skip = count(page)
-        detail = page.inner_text("#summary-detail")
+        top_strength = first_result(page)
+        print(f"top by signal strength: {top_strength}")
+
+        # 2. Editing the signals makes it a custom audience (in the URL).
+        page.click("#signal-chips li >> nth=0 >> button")
+        wait_results(page)
         check(
-            0 < n_skip < n_all and "skipped within 1 mi" in detail,
-            f"skip near {args.own}: {n_skip} ({detail})",
+            "signal=" in page.url and "preset=" not in page.url,
+            f"removed a signal: {page.locator('#signal-chips li').count()} left, custom audience",
             problems,
         )
-        page.check('input[name="own-filter"][value="only_near"]')
-        wait_idle(page)
-        check(count(page) == n_near, "back to only near restores the count and 3 mi", problems)
-        check(page.locator("#target-list li").count() > 0, "sidebar list has rows", problems)
-        check(page.locator("#dropped-section").is_visible(), "skipped list shown", problems)
-        page.screenshot(path=str(out / "02-results.png"))
+        page.fill("#signal-input", "yoga")
+        page.wait_for_selector("#signal-results li[aria-selected=true]", timeout=10_000)
+        page.keyboard.press("Enter")
+        wait_results(page)
+        check("yoga" in page.inner_text("#signal-chips"), "added a signal by search", problems)
+        page.click(f'.preset[data-key="{args.preset}"]')  # back to the preset
+        wait_results(page)
+
+        # 3. Best markets today: lookalikes.
+        for name in args.seeds.split(","):
+            page.fill("#seed-input", name)
+            page.wait_for_selector("#seed-results li[aria-selected=true]", timeout=10_000)
+            page.keyboard.press("Enter")
+            wait_results(page)
+        n_seeds = page.locator("#seed-chips li").count()
+        first_row = page.inner_text("#results li >> nth=0")
+        check(
+            n_seeds == len(args.seeds.split(","))
+            and "Closest to your best markets" in (page.text_content("#results-title") or "")
+            and "% match" in first_row
+            and page.url.count("seed=") == n_seeds,
+            f"lookalikes of {args.seeds}: {first_result(page)}",
+            problems,
+        )
+
+        # 4. A metro's details: signals vs. typical, and its brief or a note.
+        page.click("#results li >> nth=0")
+        page.wait_for_selector("#detail:not([hidden])")
+        n_bars = page.locator("#detail-signals li").count()
+        check(n_bars == n_signals, f"detail panel: {n_bars} signal bars", problems)
+        page.wait_for_load_state("networkidle")
+        brief = page.inner_text("#detail-brief")
+        print(f"brief: {brief.splitlines()[1] if brief.count(chr(10)) else brief or '(none)'}")
+        page.wait_for_timeout(800)  # map zoom
+        page.screenshot(path=str(out / "02-lookalikes.png"))
         check_a11y(page, "results page", problems)
 
-        # 3b. Layer toggles.
-        toggle = page.locator('.legend button[data-layer="own"]')
-        toggle.click()
-        check(toggle.get_attribute("aria-pressed") == "false", "legend hides your layer", problems)
-        toggle.click()
-
-        # 4. Exports.
-        for fmt, header in (("google_ads_editor", ["Campaign", "Location"]), ("generic", None)):
+        # 5. Exports.
+        for fmt, header in (
+            ("zips", ["zip", "country", "metro", "metro_rank"]),
+            ("metros", ["rank", "metro", "cbsa_code"]),
+        ):
             with page.expect_download() as dl:
                 page.click(f'.export button[data-format="{fmt}"]')
-            path = dl.value.path()
-            rows = list(csv.reader(io.StringIO(Path(path).read_text())))
-            ok = len(rows) - 1 == n_near and (header is None or rows[0] == header)
+            rows = list(csv.reader(io.StringIO(Path(dl.value.path()).read_text())))
+            ok = rows[0][: len(header)] == header and len(rows) > 1
+            if fmt == "metros":
+                ok = ok and len(rows) - 1 == 25
             check(
                 ok, f"{fmt} export: {dl.value.suggested_filename}, {len(rows) - 1} rows", problems
             )
 
-        # 5. Shareable URL restores the same view.
+        # 6. The shareable URL restores the same view, selected metro included.
         url = page.url
-        page2 = browser.new_page(viewport={"width": 1400, "height": 900})
-        page2.on("console", on_console)
+        page2 = new_page()
         page2.goto(url, wait_until="networkidle")
-        page2.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        wait_idle(page2)
-        restored = count(page2)
-        check(restored == n_near, f"URL restore ({url.split('?', 1)[-1]}): {restored}", problems)
-
-        # 5b. Links made before "only near" existed meant skip-near; they still do.
-        chain_q = args.chain.replace(" ", "+")
-        old = browser.new_page(viewport={"width": 1400, "height": 900})
-        old.on("console", on_console)
-        old.goto(
-            f"{args.base_url}/?chain={chain_q}&own={args.own.lower().replace(' ', '+')}"
-            f"&state={args.state}&skip=1",
-            wait_until="networkidle",
-        )
-        old.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        wait_idle(old)
-        skip_checked = old.is_checked('input[name="own-filter"][value="skip_near"]')
-        check(skip_checked, f"old link opens in skip mode: {count(old)}", problems)
-
-        # 5c. Upload a store list.
-        up = browser.new_page(viewport={"width": 1400, "height": 900})
-        up.on("console", on_console)
-        up.goto(f"{args.base_url}/?chain={chain_q}&state={args.state}", wait_until="networkidle")
-        up.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        upload: FilePayload = {"name": "stores.csv", "mimeType": "text/csv", "buffer": STORE_LIST}
-        up.set_input_files("#own-file", files=[upload])
-        up.wait_for_selector("#upload-selected:not([hidden])")
-        wait_idle(up)
-        detail = up.inner_text("#summary-detail")
+        wait_results(page2)
+        page2.wait_for_selector("#detail:not([hidden])", timeout=10_000)
         check(
-            count(up) > 0 and "uploaded stores" in detail,
-            f"uploaded store list: {count(up)} ({detail})",
-            problems,
-        )
-        up.screenshot(path=str(out / "05-upload.png"))
-
-        # 6. Categories: a too-broad one asks for a state; narrowing it works.
-        cat = browser.new_page(viewport={"width": 1400, "height": 900})
-        # The 422 is expected here; Chrome logs it as "Failed to load resource".
-        cat.on("console", lambda m: None if "status of 422" in m.text else on_console(m))
-        cat.goto(f"{args.base_url}/?cat=pet_groomer", wait_until="networkidle")
-        cat.wait_for_selector("#error:not([hidden])", timeout=15_000)
-        msg = cat.inner_text("#error")
-        check("Pick a state" in msg, f"broad category asks for a state: {msg[:70]}", problems)
-        area(cat, args.state)
-        cat.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        wait_idle(cat)
-        n_cat = int(cat.inner_text("#n-targets").replace(",", ""))
-        check(
-            n_cat > 0 and cat.locator("#error").is_hidden(),
-            f"pet groomers in {args.state}: {n_cat}",
-            problems,
-        )
-        cat.screenshot(path=str(out / "04-category.png"))
-
-        # 6b. A metro area instead of a state; it lands in the shareable URL.
-        metro = browser.new_page(viewport={"width": 1400, "height": 900})
-        metro.on("console", on_console)
-        metro.goto(f"{args.base_url}/?chain={chain_q}", wait_until="networkidle")
-        metro.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        wait_idle(metro)
-        n_us = count(metro)
-        # Focusing the empty field lists the states, like a dropdown.
-        metro.click("#area-input")
-        n_options = metro.locator("#area-results li[role=option]").count()
-        check(n_options == 51, f"empty area field suggests all states: {n_options}", problems)
-        metro.keyboard.press("Escape")
-        area(metro, args.metro)
-        n_metro, detail = count(metro), metro.inner_text("#summary-detail")
-        check(
-            0 < n_metro < n_us and args.metro.lower() in detail.lower() and "metro=" in metro.url,
-            f"{args.metro} metro: {n_metro} of {n_us} ({detail[:60]}…)",
-            problems,
-        )
-        metro.wait_for_timeout(1000)  # let the map finish zooming to the metro
-        metro.screenshot(path=str(out / "06-metro.png"))
-
-        # 6c. Areas combine as a union: the metro plus a whole state.
-        area(metro, args.state)
-        n_union = count(metro)
-        check(
-            n_union > n_metro and "state=" in metro.url and "metro=" in metro.url,
-            f"{args.metro} metro + {args.state}: {n_union}",
+            first_result(page2) == first_result(page) and "metro=" in url,
+            f"URL restore ({url.split('?', 1)[-1]})",
             problems,
         )
 
-        # 6c-bis. Added since the previous data release (when the data has it).
-        if metro.locator("#only-new-field").is_visible():
-            before = count(metro)
-            metro.check("#only-new")
-            wait_idle(metro)
-            n_new, detail = count(metro), metro.inner_text("#summary-detail")
-            check(
-                n_new < before and "only added since" in detail and "new=1" in metro.url,
-                f"only added since the last data: {n_new} of {before}",
-                problems,
-            )
-            metro.uncheck("#only-new")
-            wait_idle(metro)
-        else:
-            print("skip only-added check: this data has no change view")
+        # 7. A higher population floor compares fewer metros.
+        page.select_option("#min-pop", "1000000")
+        wait_results(page)
+        detail = page.inner_text("#summary-detail")
+        check("1M+" in detail, f"population filter: {detail.split(' · ')[-1]}", problems)
 
-        # 6d. Dark mode: toggle, accessible, and remembered across reloads.
-        metro.click("#theme-toggle")
-        metro.wait_for_timeout(1500)  # basemap swap
-        theme = metro.evaluate("document.documentElement.dataset.theme")
+        # 8. Layer toggles.
+        toggle = page.locator('.legend button[data-layer="seeds"]')
+        toggle.click()
+        check(toggle.get_attribute("aria-pressed") == "false", "legend hides a layer", problems)
+        toggle.click()
+
+        # 9. Dark mode: toggle, accessible, and remembered across reloads.
+        page.click("#theme-toggle")
+        page.wait_for_timeout(1500)  # basemap swap
+        theme = page.evaluate("document.documentElement.dataset.theme")
         check(theme == "dark", f"dark mode toggle: {theme}", problems)
-        metro.screenshot(path=str(out / "07-dark.png"))
-        check_a11y(metro, "dark mode", problems)
-        metro.reload(wait_until="networkidle")
-        wait_idle(metro)
-        theme = metro.evaluate("document.documentElement.dataset.theme")
-        pressed = metro.get_attribute("#theme-toggle", "aria-pressed")
+        page.screenshot(path=str(out / "03-dark.png"))
+        check_a11y(page, "dark mode", problems)
+        page.reload(wait_until="networkidle")
+        wait_results(page)
+        pressed = page.get_attribute("#theme-toggle", "aria-pressed")
+        theme = page.evaluate("document.documentElement.dataset.theme")
         check(theme == "dark" and pressed == "true", "dark mode kept after reload", problems)
 
-        # 7. Phone layout.
-        phone = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True)
-        phone.on("console", on_console)
+        # 10. Phone layout.
+        phone = new_page(390, 844, is_mobile=True)
         phone.goto(url, wait_until="networkidle")
-        phone.wait_for_selector("#summary:not([hidden])", timeout=15_000)
-        wait_idle(phone)
-        phone.screenshot(path=str(out / "03-phone.png"), full_page=True)
+        wait_results(phone)
+        phone.screenshot(path=str(out / "04-phone.png"), full_page=True)
         check_a11y(phone, "phone layout", problems)
         browser.close()
 
@@ -271,20 +189,18 @@ def main() -> None:
     print("all checks passed")
 
 
-def area(page: Page, text: str) -> None:
-    """Type into the Where field and pick the first suggestion."""
-    chips = page.locator("#area-selected li").count()
-    page.fill("#area-input", text)
-    # Wait for the typed search's results (they highlight the first option),
-    # not the state list that focusing the empty field shows.
-    page.wait_for_selector("#area-results li[aria-selected=true]", timeout=10_000)
-    page.keyboard.press("Enter")
-    page.wait_for_function(f"document.querySelectorAll('#area-selected li').length === {chips + 1}")
-    wait_idle(page)
+def wait_results(page: Page) -> None:
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("#loading[hidden]", state="attached", timeout=15_000)
+    page.wait_for_selector("#summary:not([hidden])", timeout=15_000)
 
 
 def count(page: Page) -> int:
-    return int(page.inner_text("#n-targets").replace(",", ""))
+    return int(page.inner_text("#n-results").replace(",", ""))
+
+
+def first_result(page: Page) -> str:
+    return page.inner_text("#results li >> nth=0 >> .name")
 
 
 def check_a11y(page: Page, label: str, problems: list[str]) -> None:
@@ -294,11 +210,6 @@ def check_a11y(page: Page, label: str, problems: list[str]) -> None:
         targets = ", ".join(str(n["target"]) for n in v["nodes"][:3])
         print(f"     axe {v['impact']}: {v['id']}: {v['help']} ({targets})")
     check(not violations, f"accessibility ({label}): {len(violations)} axe violations", problems)
-
-
-def wait_idle(page: Page) -> None:
-    page.wait_for_load_state("networkidle")
-    page.wait_for_selector("#loading[hidden]", state="attached", timeout=15_000)
 
 
 def check(ok: bool, label: str, problems: list[str]) -> None:

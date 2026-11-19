@@ -22,7 +22,7 @@ Every view is a shareable link. AI agents can run the same search through Turf's
 ## Why this
 
 <!-- Draft: rewrite in your own words. -->
-I first built Turf as a geo-conquesting tool: target lists of competitors' store locations near your own (it's preserved at the git tag [`v1-conquesting`](https://github.com/iamandyn/turf/tree/v1-conquesting)). It worked, but when I looked at who Valid's clients actually are, almost none have physical locations, so a store-conquesting tool solved a problem they don't have. What they do have is national budgets they split by geography. So I kept the data pipeline and the engineering and rebuilt the product around picking markets.
+I first built Turf as a geo-conquesting tool: target lists of competitors' store locations near your own. It worked, but when I looked at who Valid's clients actually are, almost none have physical locations, so a store-conquesting tool solved a problem they don't have. What they do have is national budgets they split by geography. So I kept the data pipeline and the engineering and rebuilt the product around picking markets.
 
 Overture is good at describing *what a place is like*: every business, what kind it is, for the whole US. That turns out to be a useful fingerprint of a metro. And unlike a universal "opportunity score", which I'd have no way to validate, lookalikes are anchored to the one thing a brand knows for sure: where it already wins.
 

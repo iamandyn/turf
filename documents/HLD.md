@@ -12,7 +12,7 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 
 **Users:** media buyers at an agency like Valid, an AI-native agency whose clients are national consumer brands (subscription apps, DTC, health & fitness, home services) buying on Meta, TikTok and Google. Those brands buy by geography but have no stores, so the question isn't "where are our competitors" but "where else looks like the markets that work for us".
 
-**History:** v1 (git tag `v1-conquesting`) was a geo-conquesting tool, building target lists around competitors' store locations. It was rebuilt after checking who Valid's clients actually are: almost none have physical locations. The data pipeline and the engineering carried over; the product didn't.
+**History:** the first version was a geo-conquesting tool, building target lists around competitors' store locations. It was rebuilt after checking who Valid's clients actually are: almost none have physical locations. The data pipeline and the engineering carried over; the product didn't.
 
 **Why Overture + Census:** Overture says where every business is and what kind it is, for the whole US, for free. That's enough to describe what each metro is like. The Census adds what Overture lacks: metro boundaries, population and growth. Neither measures demand, so Turf presents signals as a proxy, and the way to validate them is the brand's own results by metro.
 
@@ -67,7 +67,7 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 
 | Decision | Why | Cost |
 |---|---|---|
-| **Market selection, not geo-conquesting** (the pivot) | Valid's clients are national consumer brands without stores; they buy by geography, so "which metros next" is their question | v1's conquesting features are gone (kept in the `v1-conquesting` tag) |
+| **Market selection, not geo-conquesting** (the pivot) | Valid's clients are national consumer brands without stores; they buy by geography, so "which metros next" is their question | the conquesting features were removed (they remain in git history) |
 | **Signals are shares of local businesses, not per-capita rates** | Overture's coverage varies 3× between metros (2,100 to 6,200 open places per 100k people), so per-capita rates would partly measure mapping quality | Shares are diluted in metros with many of some other kind of business |
 | **Lookalikes to the brand's own best markets** | The brand's results are the only ground truth available; matching them is more defensible than a universal "opportunity score" | Needs seeds for the best results; without them it's only signal strength |
 | **Every result explains itself** | A media buyer has to defend a plan to a client; "2.1× the typical share of pet groomers" is checkable | More data per result |

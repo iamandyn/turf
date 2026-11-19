@@ -9,7 +9,7 @@
 **How to use it:**
 1. Search for a competitor chain (or a whole category, like pet boarding).
 2. Optionally narrow it to a state, set the ad radius, and name your own chain so Turf skips targets near your locations.
-3. Export a **Google Ads Editor** CSV (proximity targets) or a plain CSV for Meta and other tools.
+3. Export a **Google Ads Editor** CSV (proximity targets, checked by importing into Editor) or a plain CSV for Meta and other tools.
 
 Every view is a shareable link.
 

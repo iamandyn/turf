@@ -190,7 +190,7 @@ Within a tier, entries with more open locations come first. `/api/search` uses t
 `TargetResponse = {chain_key, category, radius_mi, candidates, excluded_count, targets: [Target], excluded: [{id, name, address, state, nearest_own_location, distance_mi}]}`.
 
 **CSV formats** (`to_csv`):
-- `google_ads_editor`: header `Campaign,Location`; each row is `<campaign>,(<r>mi:<lat 6dp>:<lon 6dp>)`. The proximity format comes from Google Ads Editor's "Add multiple location targets" help page. The `Campaign` column name is inferred from Editor conventions, not stated on that page. Radius is written with `:g`, so `1` stays `1` and `2.5` stays `2.5`.
+- `google_ads_editor`: header `Campaign,Location`; each row is `<campaign>,(<r>mi:<lat 6dp>:<lon 6dp>)`. The proximity format comes from Google Ads Editor's "Add multiple location targets" help page. **Verified manually on 2026-11-18:** a Turf export loaded into Google Ads Editor with every location resolving as a radius target. Editor's *file import* gives "A required account column is missing" if you choose "My data includes account information"; choose "Use selected accounts" instead, or paste through Locations → Make multiple changes. The `Campaign` value must match an existing campaign. Radius is written with `:g`, so `1` stays `1` and `2.5` stays `2.5`.
 - `generic`: `name,address,city,state,postcode,latitude,longitude,radius,radius_unit,status,overture_id`. Status is `open` or `unverified`.
 
 The filename comes from the chain or category key, reduced to `[a-z0-9-]`, so it's safe in `Content-Disposition`.
@@ -319,4 +319,4 @@ The `production` environment is optional; add required reviewers there to gate d
 - **API:** `conftest.py` builds a serving database **with the real `write_serving_db`**, then `test_api.py` and `test_targets.py` use FastAPI's `TestClient`. Rate limiting is disabled in the shared client and tested separately with small rules.
 - **Convention:** a test case taken from real data says so in a comment, quoting the actual row ("Real case: …").
 - **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error or CSP violation, and walks the flow: search, state, radius, skip chain, both exports (row counts must match the on-screen count), URL restore, phone layout. It runs locally against any base URL, and in CI after every deploy.
-- **Not covered by automated tests:** the S3 extract scripts (they need network and run for minutes), the shell deploy scripts beyond syntax and the command check, and actually importing an export into Google Ads Editor.
+- **Not covered by automated tests:** the S3 extract scripts (they need network and run for minutes), the shell deploy scripts beyond syntax and the command check, and the Google Ads Editor import, which was checked by hand once (§3.3) and isn't automated.

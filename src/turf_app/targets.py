@@ -4,7 +4,8 @@ Export formats:
 
 * ``google_ads_editor``: ``Campaign`` and ``Location`` columns, with radius
   targets written as ``(1mi:30.267153:-97.743057)``, the proximity format in
-  Google Ads Editor's "Add multiple location targets" help page.
+  Google Ads Editor's "Add multiple location targets" help page. Verified by
+  hand in Google Ads Editor on 2026-11-18 (locations resolve as radius targets).
 * ``generic``: one row per target with address, coordinates, and radius, for
   Meta Ads Manager or any other tool. Meta doesn't document a bulk file format
   for radius targets that we could verify, so this is deliberately plain.

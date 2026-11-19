@@ -121,7 +121,7 @@ def test_recommendations_skip_active_metros(client: TestClient) -> None:
     data = perf(client, rows=rows, kpi="roas", best_count=2)
     recs = [r["metro_code"] for r in data["recommendations"]["results"]]
     assert not set(recs) & {f"1000{i}" if i < 10 else "10010" for i in range(4, 11)}
-    status = {s["metro_code"]: s["status"] for s in data["status"]}
+    status = {d["metro_code"]: d["status"] for d in data["details"]}
     assert status["10002"] == "low_spend" and status["10000"] == "not_running"
 
 
@@ -176,3 +176,23 @@ def test_sample_runs_end_to_end(client: TestClient, key: str) -> None:
         preset=sample["preset"], categories=None, min_population=0, include_micro=True,
     )  # fmt: skip
     assert data["matched_rows"] == data["rows"]
+
+
+def test_recommendation_details(client: TestClient) -> None:
+    rows = rows_where_roas_rises_with_groomers(range(4, 11))
+    data = perf(client, rows=rows, kpi="roas", best_count=2)
+    first = data["details"][0]
+    assert first["metro_code"] == data["recommendations"]["results"][0]["metro_code"]
+    kpis = [m["kpi"] for m in first["similar"]]
+    assert len(kpis) == 3
+    assert first["expected_range"] == [min(kpis), max(kpis)]
+    assert first["expected_kpi"] == sorted(kpis)[1]
+    assert "people" in first["snapshot"] and "since 2020" in first["snapshot"]
+
+
+def test_best_ratio_in_signal_check(client: TestClient) -> None:
+    data = perf(client, rows=rows_where_roas_rises_with_groomers(), kpi="roas", best_count=3)
+    check = data["check"]
+    groomer = next(s for s in check["signals"] if s["signal"] == "pet_groomer")
+    dog_park = next(s for s in check["signals"] if s["signal"] == "dog_park")
+    assert groomer["best_ratio"] > 1.4 and dog_park["best_ratio"] < 0.6  # best markets: 8-10

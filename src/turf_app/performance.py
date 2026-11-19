@@ -37,8 +37,10 @@ import duckdb
 from pydantic import BaseModel, Field, model_validator
 
 from turf_app.markets import (
+    GROWTH_SIGNAL,
     MarketRequest,
     MarketResponse,
+    MarketResult,
     build_profiles,
     rank_markets,
     signal_label,
@@ -47,6 +49,7 @@ from turf_app.normalize import normalize_text
 
 MAX_ROWS = 20_000
 MIN_METROS_FOR_CHECK = 6
+SIMILAR_MARKETS = 3
 PERMUTATIONS = 999
 # The KPI's per-metro value is only trusted with at least this share of spend.
 DEFAULT_MIN_SPEND_SHARE = 0.01
@@ -116,6 +119,7 @@ class SignalFit(BaseModel):
     label: str
     rho: float  # Spearman: + means more of this signal goes with better results
     weight: float  # used for recommendations (0 = ignored)
+    best_ratio: float  # median, over the best markets, of value / typical metro
 
 
 class SignalCheck(BaseModel):
@@ -128,10 +132,22 @@ class SignalCheck(BaseModel):
     summary: str
 
 
-class Recommendation(BaseModel):
+class SimilarMarket(BaseModel):
+    metro_code: str
+    name: str
+    kpi: float
+
+
+class RecommendationDetail(BaseModel):
     metro_code: str
     status: Literal["not_running", "low_spend"]
     spend: float
+    # The brand's most similar trusted metros (same weighted signal distance as
+    # the ranking) and their actual KPI: the data behind "expected".
+    similar: list[SimilarMarket]
+    expected_kpi: float | None  # median KPI of ``similar``
+    expected_range: tuple[float, float] | None  # min and max KPI of ``similar``
+    snapshot: str  # the metro in a sentence or two, from the data
 
 
 class PerformanceResponse(BaseModel):
@@ -143,7 +159,7 @@ class PerformanceResponse(BaseModel):
     metros: list[MetroResult]  # best KPI first; untrusted last
     check: SignalCheck
     recommendations: MarketResponse
-    status: list[Recommendation]  # per recommended metro, same order
+    details: list[RecommendationDetail]  # per recommended metro, same order
 
 
 class NoUsableMetrosError(ValueError):
@@ -349,6 +365,33 @@ def _verdict(
     )
 
 
+def _compact(n: int) -> str:
+    return f"{n / 1e6:.1f}M" if n >= 1_000_000 else f"{round(n / 1000)}K"
+
+
+def snapshot(r: MarketResult) -> str:
+    """A metro in plain words, from its numbers (no AI model involved)."""
+    g = r.growth_pct
+    if g >= 8:
+        growth = f"growing fast (+{g:.1f}% since 2020)"
+    elif g >= 3:
+        growth = f"growing (+{g:.1f}% since 2020)"
+    elif g <= -1:
+        growth = f"shrinking ({g:.1f}% since 2020)"
+    else:
+        growth = f"stable ({g:+.1f}% since 2020)"
+    parts = [f"{_compact(r.population)} people, {growth}."]
+    reasons = [x for x in r.reasons if x.signal != GROWTH_SIGNAL]
+    high = [x for x in reasons if x.ratio >= 1.2][:2]
+    if high:
+        listed = " and ".join(f"{x.label} at {x.ratio:g}x" for x in high)
+        parts.append(f"Above typical: {listed} the typical share of local businesses.")
+    low = [x for x in reasons if x.ratio < 0.7][:1]
+    if low:
+        parts.append(f"Below typical: {low[0].label} ({low[0].ratio:g}x).")
+    return " ".join(parts)
+
+
 # ---------- Analysis ----------
 
 
@@ -415,14 +458,47 @@ def analyze(db: duckdb.DuckDBPyConnection, req: PerformanceRequest) -> Performan
 
     active = {c for c, t in totals.items() if t[0] >= ACTIVE_SPEND_SHARE * total_spend}
     recs = rank_markets(db, market_req, weights=use_weights, exclude=active, profiles=profiles)
-    status = [
-        Recommendation(
+    # The data behind each recommendation: the brand's most similar markets.
+    dist_w = use_weights or {sg: 1.0 for sg in profiles.signals}
+    total_dw = sum(dist_w.get(sg, 0.0) for sg in profiles.signals) or 1.0
+
+    def distance(a: str, b: str) -> float:
+        return math.sqrt(
+            sum(dist_w.get(sg, 0.0) * (profiles.z[sg][a] - profiles.z[sg][b]) ** 2
+                for sg in profiles.signals) / total_dw
+        )  # fmt: skip
+
+    def detail(r: MarketResult) -> RecommendationDetail:
+        nearest = sorted(check_codes, key=lambda c: (distance(r.metro_code, c), c))
+        similar = []
+        for c in nearest[:SIMILAR_MARKETS]:
+            value = kpi(totals[c])
+            assert value is not None  # trusted metros have a KPI
+            similar.append(SimilarMarket(metro_code=c, name=names[c], kpi=round(value, 3)))
+        values = [m.kpi for m in similar]
+        return RecommendationDetail(
             metro_code=r.metro_code,
             status="low_spend" if r.metro_code in totals else "not_running",
             spend=round(totals.get(r.metro_code, [0.0])[0], 2),
+            similar=similar,
+            expected_kpi=round(statistics.median(values), 3) if values else None,
+            expected_range=(min(values), max(values)) if values else None,
+            snapshot=snapshot(r),
         )
-        for r in recs.results
-    ]
+
+    details = [detail(r) for r in recs.results]
+
+    def best_ratio(signal: str) -> float:
+        """How far above (or below) typical this signal is in the best markets."""
+        typical = profiles.typical[signal]
+        values = []
+        for c in seeds:
+            value = profiles.raw[signal][c]
+            if signal == GROWTH_SIGNAL:
+                values.append((100 + value) / (100 + typical))
+            else:
+                values.append(value / typical if typical else 0.0)
+        return statistics.median(values) if values else 1.0
 
     def metro_result(code: str) -> MetroResult:
         t = totals[code]
@@ -457,6 +533,7 @@ def analyze(db: duckdb.DuckDBPyConnection, req: PerformanceRequest) -> Performan
                         label=signal_label(s),
                         rho=round(spearman(zs[s], good), 3),
                         weight=round(weights[s], 3),
+                        best_ratio=round(best_ratio(s), 2),
                     )
                     for s in profiles.signals
                 ),
@@ -469,5 +546,5 @@ def analyze(db: duckdb.DuckDBPyConnection, req: PerformanceRequest) -> Performan
             summary=summary,
         ),
         recommendations=recs,
-        status=status,
+        details=details,
     )

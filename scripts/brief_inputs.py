@@ -1,14 +1,13 @@
 """Dump the data each pre-written brief is grounded in (see briefs.py).
 
-For each preset: its top metros by signal strength, plus the top lookalikes for
-the demo scenario (pet care, best markets Denver and Austin). For each pair it
-prints the metro's figures, every signal vs. the typical metro, and the
-categories the metro is most over-represented in overall (local colour the
-brief may use). Writes JSON for review; the briefs themselves are written from
-it into src/turf_app/briefs.json.
+Briefs are written for what the report shows: each sample brand's top
+recommendations. For each (preset, metro) pair this prints the metro's figures,
+every signal vs. the typical metro, and the categories the metro is most
+over-represented in overall (local colour the brief may use). The briefs
+themselves are written from it into scripts/assemble_briefs.py.
 
 Usage:
-    uv run python scripts/brief_inputs.py \
+    uv run python scripts/brief_inputs.py \\
         --db data/2026-11-18.0/turf.duckdb --out data/brief_inputs.json
 """
 
@@ -20,10 +19,11 @@ from pathlib import Path
 
 import duckdb
 
-from turf_app.markets import PRESETS, MarketRequest, rank_markets
+from turf_app.markets import PRESETS
+from turf_app.performance import PerformanceRequest, analyze
+from turf_app.samples import SAMPLES, generate
 
-TOP_PER_PRESET = 10
-DEMO = ("pets", ["19740", "12420"], 5)  # preset, seeds (Denver, Austin), lookalikes
+TOP_PER_SAMPLE = 5
 # Over-representation is only meaningful for categories common enough to compare.
 MIN_US_PLACES = 2000
 
@@ -81,10 +81,16 @@ def main() -> None:
                 "distinctive_overall": distinctive(db, r.metro_code),
             }
 
-    for key in PRESETS:
-        add(key, rank_markets(db, MarketRequest(preset=key, limit=TOP_PER_PRESET)))
-    preset, seeds, n = DEMO
-    add(preset, rank_markets(db, MarketRequest(preset=preset, seeds=seeds, limit=n)))
+    for sample in SAMPLES.values():
+        data = generate(db, sample)
+        result = analyze(
+            db,
+            PerformanceRequest(
+                rows=data.rows, geo_type=data.geo_type, kpi=data.kpi, preset=data.preset,
+                limit=TOP_PER_SAMPLE,
+            ),
+        )  # fmt: skip
+        add(sample.preset, result.recommendations)
     args.out.write_text(json.dumps(list(pairs.values()), indent=1))
     print(f"{len(pairs)} preset x metro pairs -> {args.out}")
 

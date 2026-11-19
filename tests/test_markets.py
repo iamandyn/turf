@@ -21,6 +21,7 @@ from turf_app import briefs
 from turf_app.api import create_app
 from turf_app.markets import PRESETS, zip_rows
 from turf_app.ratelimit import RateLimiter
+from turf_app.samples import SAMPLES
 
 
 def markets(client: TestClient, **body: object) -> dict[str, Any]:
@@ -174,8 +175,8 @@ def test_presets(client: TestClient) -> None:
     presets = client.get("/api/presets").json()
     assert [p["key"] for p in presets] == list(PRESETS)
     assert presets[0]["categories"] == list(PRESETS["pets"].categories)
-    # The shipped briefs cover every preset.
-    assert all(p["has_briefs"] for p in presets)
+    # The shipped briefs cover the presets that have sample brands.
+    assert {p["key"] for p in presets if p["has_briefs"]} == {s.preset for s in SAMPLES.values()}
 
 
 def test_category_search(client: TestClient) -> None:
@@ -232,7 +233,7 @@ def test_briefs_loaded_and_served(
 
 def test_shipped_briefs_are_valid() -> None:
     loaded = briefs.load()
-    assert {preset for preset, _ in loaded} == set(PRESETS)
+    assert {preset for preset, _ in loaded} == {s.preset for s in SAMPLES.values()}
     for (_, code), brief in loaded.items():
         assert len(code) == 5 and code.isdigit()
         assert brief.headline and brief.angles and brief.local_context

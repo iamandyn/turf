@@ -391,7 +391,7 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         db: Db, req: PerformanceRequest, format: Literal["metros", "zips"] = "metros"
     ) -> Response:
         result = _performance(db, req)
-        status = {s.metro_code: s.status.replace("_", " ") for s in result.status}
+        status = {d.metro_code: d.status.replace("_", " ") for d in result.details}
         return _csv_response(
             db, result.recommendations, format, f"{req.preset or 'custom'}-recommended", status
         )

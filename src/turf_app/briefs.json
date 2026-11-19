@@ -1,1325 +1,23 @@
 [
  {
   "preset": "pets",
-  "metro_code": "14740",
-  "metro_name": "Bremerton-Silverdale-Port Orchard, WA",
-  "headline": "Kitsap's dogs know the beach better than you do",
-  "audience": "Dog owners around the Sound who plan weekends around shoreline walks and ferry trips.",
+  "metro_code": "15380",
+  "metro_name": "Buffalo-Cheektowaga, NY",
+  "headline": "Buffalo dogs need care through the long winter",
+  "audience": "Dog owners in a big, settled metro who board their dogs when they travel.",
   "angles": [
-   "Book a walker for ferry-commute days",
-   "Sitters who handle sandy, salty paws"
+   "Boarding for winter getaways",
+   "Walkers for snow days when you can't get home"
   ],
   "local_context": [
-   "Beaches are 11x the typical metro's share of places",
-   "Marinas and waterfront living"
+   "Pet boarding at 1.6x and dog walkers at 1.9x the typical share",
+   "Lake Erie shoreline and marinas"
   ],
   "grounded_in": [
-   "dog walker: 2.39x the typical metro's share of businesses",
-   "pet store: 2.2x the typical metro's share of businesses",
-   "pet boarding: 1.9x the typical metro's share of businesses",
-   "283,374 people in 2025, +2.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "31540",
-  "metro_name": "Madison, WI",
-  "headline": "Madison has the dog parks. You bring the schedule.",
-  "audience": "Busy professionals and grad students with dogs who are out of the house all day.",
-  "angles": [
-   "Midday walks between lectures and lab shifts",
-   "Boarding for game weekends and trips home"
-  ],
-  "local_context": [
-   "A university and health-care town",
-   "Dog parks at nearly 4x the typical share"
-  ],
-  "grounded_in": [
-   "dog walker: 4.76x the typical metro's share of businesses",
-   "dog park: 3.88x the typical metro's share of businesses",
-   "pet boarding: 2.55x the typical metro's share of businesses",
-   "709,685 people in 2025, +4.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "24540",
-  "metro_name": "Greeley, CO",
-  "headline": "Fast-growing Greeley, with dogs to match",
-  "audience": "New homeowners in one of the fastest-growing metros in the country (+14% since 2020).",
-  "angles": [
-   "Trusted care for families who just moved in",
-   "Trainers for the new puppy in the new yard"
-  ],
-  "local_context": [
-   "Farm and ranch country",
-   "No dog walkers listed yet: an open lane"
-  ],
-  "grounded_in": [
-   "dog park: 2.27x the typical metro's share of businesses",
-   "dog trainer: 1.7x the typical metro's share of businesses",
-   "pet groomer: 1.66x the typical metro's share of businesses",
-   "378,426 people in 2025, +14.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "38860",
-  "metro_name": "Portland-South Portland, ME",
-  "headline": "Portland, Maine: dogs welcome, all year round",
-  "audience": "Coastal dog owners who travel in summer and need boarding they can trust.",
-  "angles": [
-   "Summer-season boarding before the rush",
-   "Walkers for long work days in a small city"
-  ],
-  "local_context": [
-   "Beaches, inns and boat tours set the rhythm",
-   "Pet boarding at 2.5x the typical share"
-  ],
-  "grounded_in": [
-   "dog walker: 2.91x the typical metro's share of businesses",
-   "pet boarding: 2.52x the typical metro's share of businesses",
-   "dog trainer: 1.82x the typical metro's share of businesses",
-   "577,635 people in 2025, +4.5% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "36500",
-  "metro_name": "Olympia-Lacey-Tumwater, WA",
-  "headline": "Olympia's dogs deserve a trainer who gets them",
-  "audience": "Owners of young or rescue dogs in the state capital region.",
-  "angles": [
-   "Training that fits around state-office hours",
-   "Local sitters for rainy-day check-ins"
-  ],
-  "local_context": [
-   "Dog trainers at 2.2x the typical share",
-   "Beer bars and a laid-back South Sound pace"
-  ],
-  "grounded_in": [
-   "dog trainer: 2.21x the typical metro's share of businesses",
-   "pet boarding: 1.68x the typical metro's share of businesses",
-   "pet store: 1.6x the typical metro's share of businesses",
-   "304,261 people in 2025, +2.8% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "22660",
-  "metro_name": "Fort Collins-Loveland, CO",
-  "headline": "Trail dogs need walkers too",
-  "audience": "Outdoorsy owners near the Front Range whose dogs come along on every trip.",
-  "angles": [
-   "Walks on the days you can't hit the trail",
-   "Care while you're up in the mountains"
-  ],
-  "local_context": [
-   "Next door to Rocky Mountain National Park",
-   "Dog walkers at 4.7x the typical share"
-  ],
-  "grounded_in": [
-   "dog walker: 4.66x the typical metro's share of businesses",
-   "dog trainer: 2.3x the typical metro's share of businesses",
-   "veterinarian: 1.72x the typical metro's share of businesses",
-   "377,292 people in 2025, +4.8% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "39740",
-  "metro_name": "Reading, PA",
-  "headline": "Reading's dog lovers, one walk at a time",
-  "audience": "Dog owners in Berks County with long commutes to Philadelphia and beyond.",
-  "angles": [
-   "Midday walks for commuter households",
-   "Groomers and walkers booked in one place"
-  ],
-  "local_context": [
-   "Dog walkers at 3.1x the typical share",
-   "Farmland and small towns around the city"
-  ],
-  "grounded_in": [
-   "dog walker: 3.13x the typical metro's share of businesses",
-   "pet groomer: 1.53x the typical metro's share of businesses",
-   "dog trainer: 1.3x the typical metro's share of businesses",
-   "440,072 people in 2025, +2.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "49620",
-  "metro_name": "York-Hanover, PA",
-  "headline": "York County pets, pampered",
-  "audience": "Suburban families who already spend on grooming and want one app for everything.",
-  "angles": [
-   "Grooming plus walks in a single booking",
-   "Sitters for long weekends at the shore"
-  ],
-  "local_context": [
-   "Groomers at 1.9x the typical share",
-   "Small-town shops, wineries and produce stands"
-  ],
-  "grounded_in": [
-   "pet groomer: 1.85x the typical metro's share of businesses",
-   "pet store: 1.61x the typical metro's share of businesses",
-   "dog walker: 1.38x the typical metro's share of businesses",
-   "473,197 people in 2025, +3.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "17820",
-  "metro_name": "Colorado Springs, CO",
-  "headline": "Colorado Springs: your dog's mountain town",
-  "audience": "Active households, including military families who move often and need trusted care fast.",
-  "angles": [
-   "Vetted walkers when you've just moved in",
-   "Trainers for mountain-ready dogs"
-  ],
-  "local_context": [
-   "Dog walkers at 3.9x the typical share",
-   "Pikes Peak and mountain cabins nearby"
-  ],
-  "grounded_in": [
-   "dog walker: 3.94x the typical metro's share of businesses",
-   "dog trainer: 1.7x the typical metro's share of businesses",
+   "dog walker: 1.94x the typical metro's share of businesses",
+   "pet boarding: 1.63x the typical metro's share of businesses",
    "pet store: 1.26x the typical metro's share of businesses",
-   "781,796 people in 2025, +3.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "14260",
-  "metro_name": "Boise City, ID",
-  "headline": "Boise is booming, and so are its dogs",
-  "audience": "Newcomers in a metro that grew 12% since 2020, many with dogs and no local network yet.",
-  "angles": [
-   "Find your first sitter in a new city",
-   "Walkers who know the Greenbelt"
-  ],
-  "local_context": [
-   "Dog walkers at 3.8x the typical share",
-   "Wineries and outdoor living around the Treasure Valley"
-  ],
-  "grounded_in": [
-   "dog walker: 3.82x the typical metro's share of businesses",
-   "dog trainer: 1.59x the typical metro's share of businesses",
-   "pet boarding: 1.45x the typical metro's share of businesses",
-   "864,243 people in 2025, +12.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "42100",
-  "metro_name": "Santa Cruz-Watsonville, CA",
-  "headline": "Train like Santa Cruz: ocean first, then pilates",
-  "audience": "Coastal, wellness-minded adults who mix surfing, yoga and studio classes.",
-  "angles": [
-   "Workouts that fit around the swell",
-   "Pilates and yoga in one membership"
-  ],
-  "local_context": [
-   "Pilates studios at 2.8x the typical share",
-   "Beaches, skate parks and wellness everywhere"
-  ],
-  "grounded_in": [
-   "pilates studio: 2.75x the typical metro's share of businesses",
-   "yoga studio: 1.97x the typical metro's share of businesses",
-   "fitness trainer: 1.95x the typical metro's share of businesses",
-   "258,852 people in 2025, -4.8% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "11460",
-  "metro_name": "Ann Arbor, MI",
-  "headline": "Ann Arbor stretches between lectures",
-  "audience": "Students, researchers and young professionals in a university town.",
-  "angles": [
-   "Yoga for exam weeks",
-   "Strength plans that fit a lab schedule"
-  ],
-  "local_context": [
-   "Yoga studios at 2.9x the typical share",
-   "A research and university economy"
-  ],
-  "grounded_in": [
-   "yoga studio: 2.87x the typical metro's share of businesses",
-   "pilates studio: 2.23x the typical metro's share of businesses",
-   "fitness trainer: 1.79x the typical metro's share of businesses",
-   "370,214 people in 2025, -0.4% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "14860",
-  "metro_name": "Bridgeport-Stamford-Danbury, CT",
-  "headline": "Fairfield County's commuters train early",
-  "audience": "Affluent commuters along the New York line who book premium classes.",
-  "angles": [
-   "Pilates before the 7:12",
-   "Boxing for the post-market crowd"
-  ],
-  "local_context": [
-   "Pilates at 2.8x and boxing classes at 2.4x the typical share",
-   "Finance jobs and train stations"
-  ],
-  "grounded_in": [
-   "pilates studio: 2.76x the typical metro's share of businesses",
-   "boxing class: 2.37x the typical metro's share of businesses",
-   "yoga studio: 1.6x the typical metro's share of businesses",
-   "978,179 people in 2025, +3.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "14500",
-  "metro_name": "Boulder, CO",
-  "headline": "In Boulder, everyone trains. Train smarter.",
-  "audience": "Highly active adults who already run, climb and do yoga, and want structure.",
-  "angles": [
-   "Recovery and mobility for trail runners",
-   "A plan that ties studio and outdoor training together"
-  ],
-  "local_context": [
-   "Pilates studios at 4.3x the typical share",
-   "Wellness, acupuncture and mountain sports"
-  ],
-  "grounded_in": [
-   "pilates studio: 4.31x the typical metro's share of businesses",
-   "yoga studio: 2.49x the typical metro's share of businesses",
-   "fitness trainer: 2.01x the typical metro's share of businesses",
-   "328,560 people in 2025, -0.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "14460",
-  "metro_name": "Boston-Cambridge-Newton, MA-NH",
-  "headline": "Boston's biotech crowd needs a workout plan",
-  "audience": "Young professionals in research, health care and tech across Boston and Cambridge.",
-  "angles": [
-   "Workouts between experiments",
-   "Yoga that travels with you on the T"
-  ],
-  "local_context": [
-   "Yoga studios at 2.1x the typical share",
-   "Biotech and labs at 13x typical"
-  ],
-  "grounded_in": [
-   "yoga studio: 2.08x the typical metro's share of businesses",
-   "pilates studio: 1.85x the typical metro's share of businesses",
-   "boxing class: 1.67x the typical metro's share of businesses",
-   "5,034,221 people in 2025, +2.3% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "31700",
-  "metro_name": "Manchester-Nashua, NH",
-  "headline": "Southern New Hampshire's martial arts and yoga belt",
-  "audience": "Families and commuters near Manchester and Nashua who train close to home.",
-  "angles": [
-   "Classes for parents and kids together",
-   "Yoga for the drive home"
-  ],
-  "local_context": [
-   "Martial arts clubs at 1.7x and yoga at 2.0x the typical share",
-   "Outlets and nature reserves"
-  ],
-  "grounded_in": [
-   "yoga studio: 2.04x the typical metro's share of businesses",
-   "martial arts club: 1.74x the typical metro's share of businesses",
-   "fitness trainer: 1.64x the typical metro's share of businesses",
-   "433,415 people in 2025, +2.5% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "39300",
-  "metro_name": "Providence-Warwick, RI-MA",
-  "headline": "Providence gets moving, from boxing to yoga",
-  "audience": "Students and young professionals in a compact, walkable metro.",
-  "angles": [
-   "Boxing classes after work",
-   "Yoga by the water"
-  ],
-  "local_context": [
-   "Boxing at 2.1x and yoga at 2.1x the typical share",
-   "Marinas and a coastal lifestyle"
-  ],
-  "grounded_in": [
-   "yoga studio: 2.13x the typical metro's share of businesses",
-   "boxing class: 2.1x the typical metro's share of businesses",
-   "martial arts club: 1.41x the typical metro's share of businesses",
-   "1,708,161 people in 2025, +2.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "12420",
-  "metro_name": "Austin-Round Rock-San Marcos, TX",
-  "headline": "Austin's newcomers want a trainer, not just a gym",
-  "audience": "Tech workers new to one of the fastest-growing big metros (+14% since 2020).",
-  "angles": [
-   "Personal-trainer guidance in your pocket",
-   "Pilates and strength in one plan"
-  ],
-  "local_context": [
-   "Fitness trainers at 1.8x the typical share",
-   "Tech jobs, taco trucks and Tex-Mex"
-  ],
-  "grounded_in": [
-   "pilates studio: 2.33x the typical metro's share of businesses",
-   "fitness trainer: 1.75x the typical metro's share of businesses",
-   "yoga studio: 1.43x the typical metro's share of businesses",
-   "2,620,945 people in 2025, +13.9% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "41740",
-  "metro_name": "San Diego-Chula Vista-Carlsbad, CA",
-  "headline": "San Diego trains outdoors. Make it count.",
-  "audience": "Beach-going, health-focused adults, many in biotech and the military.",
-  "angles": [
-   "Pilates for core strength on and off the board",
-   "Outdoor workouts with structure"
-  ],
-  "local_context": [
-   "Pilates studios at 2.8x the typical share",
-   "Beaches and biotech well above typical"
-  ],
-  "grounded_in": [
-   "pilates studio: 2.81x the typical metro's share of businesses",
-   "fitness trainer: 1.72x the typical metro's share of businesses",
-   "yoga studio: 1.58x the typical metro's share of businesses",
-   "3,282,248 people in 2025, -0.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "fitness",
-  "metro_code": "47930",
-  "metro_name": "Waterbury-Shelton, CT",
-  "headline": "Waterbury trains close to home",
-  "audience": "Working families in the Naugatuck Valley who fit workouts around shifts.",
-  "angles": [
-   "Martial arts for the whole family",
-   "Short workouts for shift workers"
-  ],
-  "local_context": [
-   "Martial arts clubs at 1.7x the typical share",
-   "Manufacturing and machine shops"
-  ],
-  "grounded_in": [
-   "martial arts club: 1.66x the typical metro's share of businesses",
-   "fitness trainer: 1.54x the typical metro's share of businesses",
-   "yoga studio: 1.4x the typical metro's share of businesses",
-   "463,349 people in 2025, +3.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "15980",
-  "metro_name": "Cape Coral-Fort Myers, FL",
-  "headline": "Southwest Florida homes work hard in the heat",
-  "audience": "Homeowners and second-home owners in a fast-growing coastal metro (+14% since 2020).",
-  "angles": [
-   "AC tune-ups before summer",
-   "Storm-season roof checks"
-  ],
-  "local_context": [
-   "HVAC at 2.1x and roofing at 2.3x the typical share",
-   "Vacation rentals and boating everywhere"
-  ],
-  "grounded_in": [
-   "roofing: 2.25x the typical metro's share of businesses",
-   "hvac service: 2.08x the typical metro's share of businesses",
-   "home cleaning: 1.9x the typical metro's share of businesses",
-   "875,607 people in 2025, +14.4% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "24540",
-  "metro_name": "Greeley, CO",
-  "headline": "New homes in Greeley need a maintenance plan",
-  "audience": "Families buying new builds in a metro that grew 14% since 2020.",
-  "angles": [
-   "One plan for the first years in a new home",
-   "Hail and roof checks for Front Range weather"
-  ],
-  "local_context": [
-   "Roofing at 2.3x and plumbing at 1.9x the typical share",
-   "Ranching and oil and gas country"
-  ],
-  "grounded_in": [
-   "roofing: 2.27x the typical metro's share of businesses",
-   "home cleaning: 2x the typical metro's share of businesses",
-   "plumbing: 1.94x the typical metro's share of businesses",
-   "378,426 people in 2025, +14.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "19300",
-  "metro_name": "Daphne-Fairhope-Foley, AL",
-  "headline": "Baldwin County homes face the Gulf",
-  "audience": "Retirees and families moving to Alabama's coast (+15% since 2020).",
-  "angles": [
-   "Hurricane-season prep, scheduled for you",
-   "Upkeep for homes you're not always in"
-  ],
-  "local_context": [
-   "HVAC at 1.7x the typical share",
-   "Vacation rental homes far above typical"
-  ],
-  "grounded_in": [
-   "hvac service: 1.74x the typical metro's share of businesses",
-   "home cleaning: 1.72x the typical metro's share of businesses",
-   "hardware store: 1.57x the typical metro's share of businesses",
-   "267,761 people in 2025, +14.8% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "38940",
-  "metro_name": "Port St. Lucie, FL",
-  "headline": "Port St. Lucie: a new home every day",
-  "audience": "Buyers in one of the fastest-growing metros in the US (+16% since 2020).",
-  "angles": [
-   "AC care that never gets skipped",
-   "A cleaner and a plumber you already trust"
-  ],
-  "local_context": [
-   "HVAC at 1.9x the typical share",
-   "Boating and beaches along the Treasure Coast"
-  ],
-  "grounded_in": [
-   "hvac service: 1.94x the typical metro's share of businesses",
-   "home cleaning: 1.74x the typical metro's share of businesses",
-   "roofing: 1.63x the typical metro's share of businesses",
-   "568,721 people in 2025, +16.0% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "47930",
-  "metro_name": "Waterbury-Shelton, CT",
-  "headline": "Old New England homes need steady care",
-  "audience": "Owners of older homes in the Naugatuck Valley who'd rather plan repairs than react.",
-  "angles": [
-   "Plumbing check-ups for older pipes",
-   "Seasonal plans for long winters"
-  ],
-  "local_context": [
-   "Home improvement stores at 1.7x the typical share",
-   "Masonry and manufacturing trades"
-  ],
-  "grounded_in": [
-   "home improvement store: 1.69x the typical metro's share of businesses",
-   "plumbing: 1.55x the typical metro's share of businesses",
-   "roofing: 1.54x the typical metro's share of businesses",
-   "463,349 people in 2025, +3.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "37340",
-  "metro_name": "Palm Bay-Melbourne-Titusville, FL",
-  "headline": "Space Coast homes, kept mission-ready",
-  "audience": "Engineers and families moving in for aerospace jobs (+9% since 2020).",
-  "angles": [
-   "Preventive maintenance for busy engineers",
-   "Storm-season roof and AC checks"
-  ],
-  "local_context": [
-   "Home cleaning at 1.8x and roofing at 1.7x the typical share",
-   "Aerospace and beaches"
-  ],
-  "grounded_in": [
-   "home cleaning: 1.77x the typical metro's share of businesses",
-   "roofing: 1.68x the typical metro's share of businesses",
-   "hvac service: 1.54x the typical metro's share of businesses",
-   "663,982 people in 2025, +9.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "35840",
-  "metro_name": "North Port-Bradenton-Sarasota, FL",
-  "headline": "Sarasota homes need year-round care, even when you're away",
-  "audience": "Retirees and seasonal residents in a metro that grew 13% since 2020.",
-  "angles": [
-   "Checks while you're up north",
-   "AC and plumbing on a schedule"
-  ],
-  "local_context": [
-   "Home cleaning at 1.6x the typical share",
-   "Vacation homes and boating"
-  ],
-  "grounded_in": [
-   "home cleaning: 1.63x the typical metro's share of businesses",
-   "home improvement store: 1.53x the typical metro's share of businesses",
-   "roofing: 1.45x the typical metro's share of businesses",
-   "948,158 people in 2025, +13.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "49620",
-  "metro_name": "York-Hanover, PA",
-  "headline": "York County homeowners like to do it right",
-  "audience": "DIY-minded suburban homeowners who want a pro for the big jobs.",
-  "angles": [
-   "A pro for what you'd rather not DIY",
-   "One plan for HVAC, cleaning and repairs"
-  ],
-  "local_context": [
-   "Home improvement stores at 1.6x the typical share",
-   "Small towns and farmland"
-  ],
-  "grounded_in": [
-   "home improvement store: 1.6x the typical metro's share of businesses",
-   "home cleaning: 1.52x the typical metro's share of businesses",
-   "hvac service: 1.38x the typical metro's share of businesses",
-   "473,197 people in 2025, +3.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "43640",
-  "metro_name": "Slidell-Mandeville-Covington, LA",
-  "headline": "Northshore homes take on Louisiana weather",
-  "audience": "Families north of Lake Pontchartrain dealing with heat, humidity and storms.",
-  "angles": [
-   "Humidity-proof HVAC care",
-   "Storm prep on a schedule"
-  ],
-  "local_context": [
-   "HVAC at 1.5x the typical share",
-   "Lakefront living, marinas and Cajun food"
-  ],
-  "grounded_in": [
-   "home improvement store: 1.49x the typical metro's share of businesses",
-   "hvac service: 1.45x the typical metro's share of businesses",
-   "home cleaning: 1.33x the typical metro's share of businesses",
-   "279,108 people in 2025, +5.3% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "home_services",
-  "metro_code": "34940",
-  "metro_name": "Naples-Marco Island, FL",
-  "headline": "Naples homes, cared for in season and out",
-  "audience": "Affluent seasonal residents who want their homes ready when they arrive.",
-  "angles": [
-   "Cleaning before you fly in",
-   "Roof checks after storm season"
-  ],
-  "local_context": [
-   "Home cleaning at 1.9x the typical share",
-   "Boat tours, beaches and the Everglades nearby"
-  ],
-  "grounded_in": [
-   "home cleaning: 1.94x the typical metro's share of businesses",
-   "roofing: 1.67x the typical metro's share of businesses",
-   "home improvement store: 1.37x the typical metro's share of businesses",
-   "417,131 people in 2025, +10.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "32580",
-  "metro_name": "McAllen-Edinburg-Mission, TX",
-  "headline": "The Rio Grande Valley invests in wellness",
-  "audience": "Health-conscious families who already shop at health food and supplement stores.",
-  "angles": [
-   "Bilingual wellness content",
-   "Supplements for hot, active days"
-  ],
-  "local_context": [
-   "Health food stores at 3x the typical share",
-   "Tex-Mex and family-centered culture"
-  ],
-  "grounded_in": [
-   "health food store: 3.01x the typical metro's share of businesses",
-   "medical spa: 2.13x the typical metro's share of businesses",
-   "vitamin and supplement store: 2.07x the typical metro's share of businesses",
-   "921,549 people in 2025, +5.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "43640",
-  "metro_name": "Slidell-Mandeville-Covington, LA",
-  "headline": "Northshore self-care, done right",
-  "audience": "Suburban women who book spa and salon visits regularly.",
-  "angles": [
-   "Glow-up routines for humid summers",
-   "Spa-quality results at home"
-  ],
-  "local_context": [
-   "Health food stores at 1.9x and med spas at 1.6x the typical share",
-   "Lake and bayou lifestyle"
-  ],
-  "grounded_in": [
-   "health food store: 1.93x the typical metro's share of businesses",
-   "medical spa: 1.6x the typical metro's share of businesses",
-   "spa: 1.41x the typical metro's share of businesses",
-   "279,108 people in 2025, +5.3% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "22180",
-  "metro_name": "Fayetteville, NC",
-  "headline": "Fayetteville's salon culture runs deep",
-  "audience": "Military families and young adults who keep a regular salon routine.",
-  "angles": [
-   "Haircare that travels through a PCS move",
-   "Supplements for active lifestyles"
-  ],
-  "local_context": [
-   "Hair salons at 1.6x the typical share",
-   "A large military community; Caribbean and soul food"
-  ],
-  "grounded_in": [
-   "hair salon: 1.56x the typical metro's share of businesses",
-   "spa: 1.52x the typical metro's share of businesses",
-   "nail salon: 1.45x the typical metro's share of businesses",
-   "395,412 people in 2025, +1.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "45300",
-  "metro_name": "Tampa-St. Petersburg-Clearwater, FL",
-  "headline": "Tampa Bay's med-spa boom",
-  "audience": "Image-conscious adults in a growing metro (+7% since 2020) where med spas are everywhere.",
-  "angles": [
-   "Between-appointment skincare",
-   "Sun-proof routines for beach life"
-  ],
-  "local_context": [
-   "Med spas at 1.9x the typical share",
-   "Beaches and boating culture"
-  ],
-  "grounded_in": [
-   "medical spa: 1.93x the typical metro's share of businesses",
-   "spa: 1.33x the typical metro's share of businesses",
-   "vitamin and supplement store: 1.28x the typical metro's share of businesses",
-   "3,418,895 people in 2025, +7.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "34940",
-  "metro_name": "Naples-Marco Island, FL",
-  "headline": "Naples spends on looking good",
-  "audience": "Affluent residents, many seasonal, who already use med spas.",
-  "angles": [
-   "Premium skincare that matches the med-spa routine",
-   "Sun repair for year-round Florida"
-  ],
-  "local_context": [
-   "Med spas at 2.5x the typical share",
-   "Boat tours and beaches far above typical"
-  ],
-  "grounded_in": [
-   "medical spa: 2.54x the typical metro's share of businesses",
-   "health food store: 1.46x the typical metro's share of businesses",
-   "nail salon: 1.27x the typical metro's share of businesses",
-   "417,131 people in 2025, +10.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "12060",
-  "metro_name": "Atlanta-Sandy Springs-Roswell, GA",
-  "headline": "Atlanta's hair care capital",
-  "audience": "Style-forward adults in a big, fast-growing metro with a strong salon culture.",
-  "angles": [
-   "Haircare that protects the salon look",
-   "Wellness for a busy city"
-  ],
-  "local_context": [
-   "Hair salons at 1.5x the typical share",
-   "Southern and Caribbean food, talent agencies"
-  ],
-  "grounded_in": [
-   "hair salon: 1.51x the typical metro's share of businesses",
-   "medical spa: 1.49x the typical metro's share of businesses",
-   "spa: 1.24x the typical metro's share of businesses",
-   "6,482,182 people in 2025, +5.9% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "17300",
-  "metro_name": "Clarksville, TN-KY",
-  "headline": "Clarksville's self-care routine",
-  "audience": "Young military families and service members near Fort Campbell.",
-  "angles": [
-   "Nails and wellness on a budget",
-   "Supplements for active duty schedules"
-  ],
-  "local_context": [
-   "Nail salons at 1.5x and health food stores at 1.6x the typical share",
-   "A large military community"
-  ],
-  "grounded_in": [
-   "health food store: 1.57x the typical metro's share of businesses",
-   "nail salon: 1.45x the typical metro's share of businesses",
-   "vitamin and supplement store: 1.3x the typical metro's share of businesses",
-   "349,001 people in 2025, +8.4% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "38060",
-  "metro_name": "Phoenix-Mesa-Chandler, AZ",
-  "headline": "Phoenix skin needs serious care",
-  "audience": "Adults in a hot, sunny, fast-growing metro (+7% since 2020) who visit med spas.",
-  "angles": [
-   "Desert-proof skincare",
-   "Supplements for heat and hydration"
-  ],
-  "local_context": [
-   "Med spas at 2.9x the typical share",
-   "Pools, sun and mountain trails"
-  ],
-  "grounded_in": [
-   "medical spa: 2.86x the typical metro's share of businesses",
-   "vitamin and supplement store: 1.47x the typical metro's share of businesses",
-   "spa: 1.21x the typical metro's share of businesses",
-   "5,228,938 people in 2025, +7.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "15180",
-  "metro_name": "Brownsville-Harlingen, TX",
-  "headline": "Brownsville's spa-day habit",
-  "audience": "Families in the lower Rio Grande Valley who spend on spa and wellness.",
-  "angles": [
-   "Bilingual skincare routines",
-   "Wellness for coastal heat"
-  ],
-  "local_context": [
-   "Spas at 1.7x and med spas at 1.8x the typical share",
-   "South Padre beaches nearby"
-  ],
-  "grounded_in": [
-   "medical spa: 1.8x the typical metro's share of businesses",
-   "spa: 1.73x the typical metro's share of businesses",
-   "vitamin and supplement store: 1.71x the typical metro's share of businesses",
-   "433,946 people in 2025, +3.0% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "beauty_wellness",
-  "metro_code": "28660",
-  "metro_name": "Killeen-Temple, TX",
-  "headline": "Killeen-Temple looks after itself",
-  "audience": "Military families near Fort Cavazos and a growing population (+7% since 2020).",
-  "angles": [
-   "Salon-quality results between appointments",
-   "Wellness for shift schedules"
-  ],
-  "local_context": [
-   "Nail salons at 1.4x the typical share",
-   "A large military community; Korean and Caribbean food"
-  ],
-  "grounded_in": [
-   "nail salon: 1.4x the typical metro's share of businesses",
-   "health food store: 1.25x the typical metro's share of businesses",
-   "hair salon: 1.23x the typical metro's share of businesses",
-   "511,497 people in 2025, +7.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "22020",
-  "metro_name": "Fargo, ND-MN",
-  "headline": "Fargo's young workforce is growing",
-  "audience": "Students and early-career professionals in a metro up 7.7% since 2020.",
-  "angles": [
-   "Budgeting for a first apartment",
-   "Productivity for students who work"
-  ],
-  "local_context": [
-   "Coworking at 2x and colleges at 2.2x the typical share",
-   "Apartments well above typical"
-  ],
-  "grounded_in": [
-   "college university: 2.21x the typical metro's share of businesses",
-   "smoothie juice bar: 2.2x the typical metro's share of businesses",
-   "coworking space: 2.04x the typical metro's share of businesses",
-   "269,528 people in 2025, +7.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "35380",
-  "metro_name": "New Orleans-Metairie, LA",
-  "headline": "New Orleans: work hard, then go out",
-  "audience": "Young adults in a city with a big nightlife scene.",
-  "angles": [
-   "Money tools for nights out and big festivals",
-   "Side-gig income tracking"
-  ],
-  "local_context": [
-   "Bars at 3x the typical share",
-   "Cocktail bars, live music and Creole food"
-  ],
-  "grounded_in": [
-   "bar: 2.97x the typical metro's share of businesses",
-   "smoothie juice bar: 1.71x the typical metro's share of businesses",
-   "coworking space: 1.31x the typical metro's share of businesses",
-   "970,849 people in 2025, -3.4% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "23540",
-  "metro_name": "Gainesville, FL",
-  "headline": "Gainesville: built around campus",
-  "audience": "University students and new grads in health care and research.",
-  "angles": [
-   "A first budget, built for students",
-   "Tools for grad-school productivity"
-  ],
-  "local_context": [
-   "Colleges at 3.9x the typical share",
-   "Research institutes and game-day culture"
-  ],
-  "grounded_in": [
-   "college university: 3.91x the typical metro's share of businesses",
-   "coworking space: 1.83x the typical metro's share of businesses",
-   "coffee shop: 1.08x the typical metro's share of businesses",
-   "359,036 people in 2025, +5.4% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "46520",
-  "metro_name": "Urban Honolulu, HI",
-  "headline": "Honolulu's young professionals juggle high costs",
-  "audience": "Young adults in one of the most expensive metros in the US.",
-  "angles": [
-   "Saving goals for island living",
-   "Coffee-shop productivity"
-  ],
-  "local_context": [
-   "Smoothie bars and coffee shops above typical",
-   "Beaches and outdoor living"
-  ],
-  "grounded_in": [
-   "college university: 1.65x the typical metro's share of businesses",
-   "smoothie juice bar: 1.6x the typical metro's share of businesses",
-   "coworking space: 1.4x the typical metro's share of businesses",
-   "988,703 people in 2025, -2.3% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "45780",
-  "metro_name": "Toledo, OH",
-  "headline": "Toledo works from the coffee shop",
-  "audience": "Young workers and students in an affordable Great Lakes city.",
-  "angles": [
-   "Make the most of a lower cost of living",
-   "Coworking-friendly productivity"
-  ],
-  "local_context": [
-   "Bars at 2x and coworking at 1.7x the typical share",
-   "Marinas and lake life"
-  ],
-  "grounded_in": [
-   "bar: 1.98x the typical metro's share of businesses",
-   "coworking space: 1.72x the typical metro's share of businesses",
-   "college university: 1.56x the typical metro's share of businesses",
-   "599,376 people in 2025, -1.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "11460",
-  "metro_name": "Ann Arbor, MI",
-  "headline": "Ann Arbor's startup and study crowd",
-  "audience": "Students, researchers and startup founders in a university town.",
-  "angles": [
-   "Tools for the lab-to-startup path",
-   "Student-friendly finance"
-  ],
-  "local_context": [
-   "Colleges at 4x and coworking at 3.9x the typical share",
-   "Research institutes and biotech"
-  ],
-  "grounded_in": [
-   "college university: 3.97x the typical metro's share of businesses",
-   "coworking space: 3.88x the typical metro's share of businesses",
-   "coffee shop: 1.16x the typical metro's share of businesses",
-   "370,214 people in 2025, -0.4% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "24580",
-  "metro_name": "Green Bay, WI",
-  "headline": "Green Bay works, then hits the bar",
-  "audience": "Young workers in a tight-knit city with a big game-day culture.",
-  "angles": [
-   "Money tools for game days and road trips",
-   "Coworking productivity"
-  ],
-  "local_context": [
-   "Bars at 3.5x and coworking at 3.2x the typical share",
-   "Lake life and dairy country"
-  ],
-  "grounded_in": [
-   "bar: 3.51x the typical metro's share of businesses",
-   "coworking space: 3.17x the typical metro's share of businesses",
-   "smoothie juice bar: 1.01x the typical metro's share of businesses",
-   "336,756 people in 2025, +2.5% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "30700",
-  "metro_name": "Lincoln, NE",
-  "headline": "Lincoln's campus-to-career city",
-  "audience": "University students and young professionals in Nebraska's capital.",
-  "angles": [
-   "A first-job money plan",
-   "Study tools for campus life"
-  ],
-  "local_context": [
-   "Colleges at 2.7x the typical share",
-   "Campus buildings and agricultural research"
-  ],
-  "grounded_in": [
-   "college university: 2.69x the typical metro's share of businesses",
-   "bar: 1.56x the typical metro's share of businesses",
-   "coffee shop: 1.38x the typical metro's share of businesses",
-   "352,081 people in 2025, +3.3% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "17780",
-  "metro_name": "College Station-Bryan, TX",
-  "headline": "College Station runs on students",
-  "audience": "University students in a fast-growing college town (+6.9% since 2020).",
-  "angles": [
-   "Budgets built around the semester",
-   "Study tools that work on game days too"
-  ],
-  "local_context": [
-   "Colleges at 3.8x the typical share",
-   "Research institutes and Tex-Mex"
-  ],
-  "grounded_in": [
-   "college university: 3.81x the typical metro's share of businesses",
-   "smoothie juice bar: 1.45x the typical metro's share of businesses",
-   "bar: 1.28x the typical metro's share of businesses",
-   "287,476 people in 2025, +6.9% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "young_professionals",
-  "metro_code": "39300",
-  "metro_name": "Providence-Warwick, RI-MA",
-  "headline": "Providence: small city, big coffee culture",
-  "audience": "Students and young professionals in a walkable, college-heavy metro.",
-  "angles": [
-   "Productivity from the coffee shop",
-   "Student-to-first-job finance"
-  ],
-  "local_context": [
-   "Coffee shops at 1.6x the typical share",
-   "Marinas and a coastal lifestyle"
-  ],
-  "grounded_in": [
-   "coffee shop: 1.55x the typical metro's share of businesses",
-   "smoothie juice bar: 1.38x the typical metro's share of businesses",
-   "college university: 1.27x the typical metro's share of businesses",
-   "1,708,161 people in 2025, +2.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "36260",
-  "metro_name": "Ogden, UT",
-  "headline": "Ogden's kids are always on the move",
-  "audience": "Young families along the Wasatch Front who sign kids up for everything.",
-  "angles": [
-   "Learning that fits between gymnastics and practice",
-   "Tools for big, busy families"
-  ],
-  "local_context": [
-   "Gymnastics centers at 2.6x and pediatric dentists at 2.5x the typical share",
-   "Hiking trails and amusement parks"
-  ],
-  "grounded_in": [
-   "gymnastics center: 2.56x the typical metro's share of businesses",
-   "pediatric dentistry: 2.5x the typical metro's share of businesses",
-   "pediatric clinic: 1.6x the typical metro's share of businesses",
-   "672,784 people in 2025, +5.3% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "36540",
-  "metro_name": "Omaha, NE-IA",
-  "headline": "Omaha families plan ahead",
-  "audience": "Young families in a growing metro (+4.2% since 2020) with lots of pediatric care.",
-  "angles": [
-   "Organize the pediatrician, daycare and activities",
-   "Early learning at home"
-  ],
-  "local_context": [
-   "Pediatric clinics at 2.5x the typical share",
-   "Daycare at 1.9x typical"
-  ],
-  "grounded_in": [
-   "pediatric clinic: 2.5x the typical metro's share of businesses",
-   "child care and day care: 1.87x the typical metro's share of businesses",
-   "pediatric dentistry: 1.33x the typical metro's share of businesses",
-   "1,009,836 people in 2025, +4.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "29180",
-  "metro_name": "Lafayette, LA",
-  "headline": "Acadiana's kids, dressed for every occasion",
-  "audience": "Families in Cajun country who spend on kids' clothing and activities.",
-  "angles": [
-   "Learning rooted in local culture",
-   "Activities beyond the gymnastics gym"
-  ],
-  "local_context": [
-   "Children's clothing stores at 2.7x the typical share",
-   "Cajun food, festivals and oil and gas jobs"
-  ],
-  "grounded_in": [
-   "childrens clothing store: 2.65x the typical metro's share of businesses",
-   "gymnastics center: 1.96x the typical metro's share of businesses",
-   "pediatric clinic: 1.58x the typical metro's share of businesses",
-   "423,758 people in 2025, +3.8% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "12940",
-  "metro_name": "Baton Rouge, LA",
-  "headline": "Baton Rouge: family life, full schedule",
-  "audience": "Families who balance pediatric visits, daycare and activities.",
-  "angles": [
-   "One place for the family calendar",
-   "Learning between school and practice"
-  ],
-  "local_context": [
-   "Pediatric clinics at 2.4x the typical share",
-   "Children's clothing at 2x typical"
-  ],
-  "grounded_in": [
-   "pediatric clinic: 2.4x the typical metro's share of businesses",
-   "childrens clothing store: 2.02x the typical metro's share of businesses",
-   "child care and day care: 1.48x the typical metro's share of businesses",
-   "888,699 people in 2025, +2.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "42340",
-  "metro_name": "Savannah, GA",
-  "headline": "Savannah's growing families",
-  "audience": "Young families in a metro up 8% since 2020.",
-  "angles": [
-   "Settling kids into a new city",
-   "Learning on the go"
-  ],
-  "local_context": [
-   "Children's clothing at 2.5x the typical share",
-   "Historic squares, beaches and river life"
-  ],
-  "grounded_in": [
-   "childrens clothing store: 2.5x the typical metro's share of businesses",
-   "child care and day care: 1.47x the typical metro's share of businesses",
-   "pediatric clinic: 1.46x the typical metro's share of businesses",
-   "438,314 people in 2025, +8.1% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "21780",
-  "metro_name": "Evansville, IN",
-  "headline": "Evansville families, well looked after",
-  "audience": "Working families on the Ohio River who rely on local pediatric care.",
-  "angles": [
-   "Organize appointments and school life",
-   "Affordable at-home learning"
-  ],
-  "local_context": [
-   "Pediatric clinics at 2.4x the typical share",
-   "Manufacturing jobs"
-  ],
-  "grounded_in": [
-   "pediatric clinic: 2.36x the typical metro's share of businesses",
-   "childrens clothing store: 1.92x the typical metro's share of businesses",
-   "gymnastics center: 1.66x the typical metro's share of businesses",
-   "273,786 people in 2025, +1.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "39340",
-  "metro_name": "Provo-Orem-Lehi, UT",
-  "headline": "Utah County's big young families",
-  "audience": "Families with young kids in one of the fastest-growing metros (+14.5% since 2020).",
-  "angles": [
-   "Learning tools for siblings of every age",
-   "Activity planning for busy households"
-  ],
-  "local_context": [
-   "Gymnastics centers at 2.4x the typical share",
-   "Tech jobs in Silicon Slopes"
-  ],
-  "grounded_in": [
-   "gymnastics center: 2.42x the typical metro's share of businesses",
-   "pediatric dentistry: 1.81x the typical metro's share of businesses",
-   "pediatric clinic: 1.55x the typical metro's share of businesses",
-   "773,426 people in 2025, +14.5% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "31140",
-  "metro_name": "Louisville/Jefferson County, KY-IN",
-  "headline": "Louisville families, from checkups to classes",
-  "audience": "Families who use the city's large pediatric and medical network.",
-  "angles": [
-   "Keep health visits and activities in one place",
-   "Learning for school-age kids"
-  ],
-  "local_context": [
-   "Pediatric clinics at 2.3x the typical share",
-   "A major medical center; bourbon country"
-  ],
-  "grounded_in": [
-   "pediatric clinic: 2.29x the typical metro's share of businesses",
-   "child care and day care: 1.5x the typical metro's share of businesses",
-   "pediatric dentistry: 1.3x the typical metro's share of businesses",
-   "1,402,509 people in 2025, +2.9% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "14860",
-  "metro_name": "Bridgeport-Stamford-Danbury, CT",
-  "headline": "Fairfield County invests in its kids",
-  "audience": "Affluent commuter families who spend on childcare, clothes and enrichment.",
-  "angles": [
-   "Premium learning at home",
-   "Enrichment that fits commuter schedules"
-  ],
-  "local_context": [
-   "Children's clothing at 1.8x the typical share",
-   "Finance jobs and train stations"
-  ],
-  "grounded_in": [
-   "childrens clothing store: 1.82x the typical metro's share of businesses",
-   "pediatric dentistry: 1.59x the typical metro's share of businesses",
-   "child care and day care: 1.37x the typical metro's share of businesses",
-   "978,179 people in 2025, +3.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "families",
-  "metro_code": "29700",
-  "metro_name": "Laredo, TX",
-  "headline": "Laredo's families, close-knit and growing",
-  "audience": "Bilingual families in a border city up 5% since 2020.",
-  "angles": [
-   "Bilingual learning at home",
-   "Activities that keep kids moving"
-  ],
-  "local_context": [
-   "Children's clothing at 2.6x the typical share",
-   "A logistics and trade hub"
-  ],
-  "grounded_in": [
-   "childrens clothing store: 2.63x the typical metro's share of businesses",
-   "gymnastics center: 1.61x the typical metro's share of businesses",
-   "pediatric dentistry: 1.26x the typical metro's share of businesses",
-   "281,224 people in 2025, +5.2% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "14500",
-  "metro_name": "Boulder, CO",
-  "headline": "Boulder's dogs live an active lifestyle. Keep up.",
-  "audience": "Health-minded professionals who treat their dogs like training partners.",
-  "angles": [
-   "Walks and runs while you're at the lab",
-   "Boarding for ski weekends"
-  ],
-  "local_context": [
-   "Dog walkers at 3.2x the typical share",
-   "Research labs, wellness and the Flatirons"
-  ],
-  "grounded_in": [
-   "dog walker: 3.23x the typical metro's share of businesses",
-   "dog park: 1.2x the typical metro's share of businesses",
-   "pet boarding: 1.17x the typical metro's share of businesses",
-   "328,560 people in 2025, -0.7% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "39580",
-  "metro_name": "Raleigh-Cary, NC",
-  "headline": "Raleigh's newest residents have four legs too",
-  "audience": "Young professionals moving to the Triangle (+12.6% since 2020) for tech and pharma jobs.",
-  "angles": [
-   "A walker on day one in a new city",
-   "Care that fits a hybrid work week"
-  ],
-  "local_context": [
-   "Dog walkers at 3.8x the typical share",
-   "Pharma and research jobs across the Triangle"
-  ],
-  "grounded_in": [
-   "dog walker: 3.83x the typical metro's share of businesses",
-   "dog trainer: 1.3x the typical metro's share of businesses",
-   "pet boarding: 1.24x the typical metro's share of businesses",
-   "1,595,720 people in 2025, +12.6% since 2020 (Census)"
-  ]
- },
- {
-  "preset": "pets",
-  "metro_code": "37980",
-  "metro_name": "Philadelphia-Camden-Wilmington, PA-NJ-DE-MD",
-  "headline": "Philly rowhouse dogs need their walks",
-  "audience": "City dwellers without yards, where a midday walk isn't optional.",
-  "angles": [
-   "Midday walks for rowhouse dogs",
-   "Sitters a train ride away"
-  ],
-  "local_context": [
-   "Dog walkers at 3.2x the typical share",
-   "Dense, transit-connected neighborhoods"
-  ],
-  "grounded_in": [
-   "dog walker: 3.22x the typical metro's share of businesses",
-   "dog park: 1.12x the typical metro's share of businesses",
-   "pet store: 1.05x the typical metro's share of businesses",
-   "6,329,118 people in 2025, +1.4% since 2020 (Census)"
+   "1,155,653 people in 2025, -0.8% since 2020 (Census)"
   ]
  },
  {
@@ -1345,23 +43,380 @@
  },
  {
   "preset": "pets",
-  "metro_code": "38900",
-  "metro_name": "Portland-Vancouver-Hillsboro, OR-WA",
-  "headline": "Portland's dogs go everywhere. Their sitters should too.",
-  "audience": "Urban dog owners in Portland and Vancouver who take their dogs to breweries and parks.",
+  "metro_code": "34940",
+  "metro_name": "Naples-Marco Island, FL",
+  "headline": "Naples dogs, cared for in season and out",
+  "audience": "Seasonal and year-round residents in a fast-growing coastal metro (+10.6% since 2020).",
   "angles": [
-   "Boarding for wine-country weekends",
-   "Walkers for rainy months"
+   "Boarding while you're up north",
+   "Walkers who know beach-day routines"
   ],
   "local_context": [
-   "Pet boarding at 1.7x the typical share",
-   "Wineries and beer bars well above typical"
+   "Dog walkers at 2x and pet boarding at 1.4x the typical share",
+   "Boat tours, beaches and vacation homes"
   ],
   "grounded_in": [
-   "dog walker: 2.25x the typical metro's share of businesses",
-   "pet boarding: 1.66x the typical metro's share of businesses",
-   "dog park: 1.46x the typical metro's share of businesses",
-   "2,542,282 people in 2025, +1.0% since 2020 (Census)"
+   "dog walker: 2.02x the typical metro's share of businesses",
+   "pet boarding: 1.4x the typical metro's share of businesses",
+   "pet store: 1.07x the typical metro's share of businesses",
+   "417,131 people in 2025, +10.6% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "pets",
+  "metro_code": "14500",
+  "metro_name": "Boulder, CO",
+  "headline": "Boulder's dogs live an active lifestyle. Keep up.",
+  "audience": "Health-minded professionals who treat their dogs like training partners.",
+  "angles": [
+   "Walks and runs while you're at the lab",
+   "Boarding for ski weekends"
+  ],
+  "local_context": [
+   "Dog walkers at 3.2x the typical share",
+   "Research labs, wellness and the Flatirons"
+  ],
+  "grounded_in": [
+   "dog walker: 3.23x the typical metro's share of businesses",
+   "dog park: 1.2x the typical metro's share of businesses",
+   "pet boarding: 1.17x the typical metro's share of businesses",
+   "328,560 people in 2025, -0.7% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "pets",
+  "metro_code": "49340",
+  "metro_name": "Worcester, MA",
+  "headline": "Worcester dog owners plan ahead",
+  "audience": "Commuting households in central Massachusetts who rely on boarding and training.",
+  "angles": [
+   "Boarding for Boston-commute days",
+   "Training for the new family dog"
+  ],
+  "local_context": [
+   "Pet boarding at 1.9x and dog parks at 1.4x the typical share",
+   "Biotech and labs along the I-90 corridor"
+  ],
+  "grounded_in": [
+   "pet boarding: 1.88x the typical metro's share of businesses",
+   "dog trainer: 1.41x the typical metro's share of businesses",
+   "dog park: 1.4x the typical metro's share of businesses",
+   "888,502 people in 2025, +3.7% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "fitness",
+  "metro_code": "22660",
+  "metro_name": "Fort Collins-Loveland, CO",
+  "headline": "Fort Collins trains for the mountains",
+  "audience": "Active adults near the Front Range who mix trail time with studio classes.",
+  "angles": [
+   "Strength and mobility for hikers and climbers",
+   "Yoga and pilates in one plan"
+  ],
+  "local_context": [
+   "Yoga at 1.7x and pilates at 1.8x the typical share",
+   "Next to Rocky Mountain National Park"
+  ],
+  "grounded_in": [
+   "pilates studio: 1.75x the typical metro's share of businesses",
+   "yoga studio: 1.7x the typical metro's share of businesses",
+   "boxing class: 1.47x the typical metro's share of businesses",
+   "377,292 people in 2025, +4.8% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "fitness",
+  "metro_code": "46060",
+  "metro_name": "Tucson, AZ",
+  "headline": "Tucson's pilates boom",
+  "audience": "Adults in a sunny desert metro who train indoors through the heat.",
+  "angles": [
+   "Pilates and core at home on hot afternoons",
+   "Early-morning plans before the heat"
+  ],
+  "local_context": [
+   "Pilates studios at 2.2x the typical share",
+   "Mountains and national parks all around"
+  ],
+  "grounded_in": [
+   "pilates studio: 2.16x the typical metro's share of businesses",
+   "yoga studio: 1.42x the typical metro's share of businesses",
+   "martial arts club: 1.23x the typical metro's share of businesses",
+   "1,074,685 people in 2025, +2.8% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "fitness",
+  "metro_code": "35300",
+  "metro_name": "New Haven, CT",
+  "headline": "New Haven stretches between classes and labs",
+  "audience": "Students, researchers and young professionals in a university city.",
+  "angles": [
+   "Yoga for study and lab schedules",
+   "Trainer-guided plans in your pocket"
+  ],
+  "local_context": [
+   "Yoga studios at 1.7x the typical share",
+   "A university town with biotech labs"
+  ],
+  "grounded_in": [
+   "yoga studio: 1.67x the typical metro's share of businesses",
+   "fitness trainer: 1.41x the typical metro's share of businesses",
+   "martial arts club: 1.21x the typical metro's share of businesses",
+   "578,741 people in 2025, +2.5% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "fitness",
+  "metro_code": "37100",
+  "metro_name": "Oxnard-Thousand Oaks-Ventura, CA",
+  "headline": "Ventura County boxes and stretches",
+  "audience": "Coastal suburban adults who already book boxing and pilates classes.",
+  "angles": [
+   "Boxing workouts at home",
+   "Pilates for beach-ready strength"
+  ],
+  "local_context": [
+   "Pilates at 2.1x and boxing classes at 1.8x the typical share",
+   "Beaches and wineries"
+  ],
+  "grounded_in": [
+   "pilates studio: 2.08x the typical metro's share of businesses",
+   "boxing class: 1.78x the typical metro's share of businesses",
+   "martial arts club: 1.48x the typical metro's share of businesses",
+   "830,851 people in 2025, -1.5% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "fitness",
+  "metro_code": "25540",
+  "metro_name": "Hartford-West Hartford-East Hartford, CT",
+  "headline": "Hartford's yoga commuters",
+  "audience": "Insurance-industry professionals and families in central Connecticut.",
+  "angles": [
+   "Yoga for the commute home",
+   "Short trainer-led workouts before work"
+  ],
+  "local_context": [
+   "Yoga at 1.8x and fitness trainers at 1.5x the typical share",
+   "Nature reserves and the Connecticut River"
+  ],
+  "grounded_in": [
+   "yoga studio: 1.83x the typical metro's share of businesses",
+   "fitness trainer: 1.47x the typical metro's share of businesses",
+   "pilates studio: 1.42x the typical metro's share of businesses",
+   "1,171,426 people in 2025, +3.0% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "home_services",
+  "metro_code": "35380",
+  "metro_name": "New Orleans-Metairie, LA",
+  "headline": "New Orleans homes face heat, humidity and storms",
+  "audience": "Homeowners with older houses who need dependable upkeep.",
+  "angles": [
+   "Humidity-proof AC care",
+   "Storm-season checks on a schedule"
+  ],
+  "local_context": [
+   "Home-service businesses at about the typical share",
+   "Historic homes, Creole food and river life"
+  ],
+  "grounded_in": [
+   "plumbing: 1x the typical metro's share of businesses",
+   "home improvement store: 0.99x the typical metro's share of businesses",
+   "home cleaning: 0.99x the typical metro's share of businesses",
+   "970,849 people in 2025, -3.4% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "home_services",
+  "metro_code": "14260",
+  "metro_name": "Boise City, ID",
+  "headline": "Boise's new homeowners need a plan",
+  "audience": "Families moving into one of the fastest-growing metros (+12.2% since 2020).",
+  "angles": [
+   "One plan for the first years in a new home",
+   "Plumbing check-ups before winter"
+  ],
+  "local_context": [
+   "Plumbing at 1.4x the typical share",
+   "Wineries and outdoor living around the Treasure Valley"
+  ],
+  "grounded_in": [
+   "plumbing: 1.41x the typical metro's share of businesses",
+   "home cleaning: 1.19x the typical metro's share of businesses",
+   "hvac service: 1.03x the typical metro's share of businesses",
+   "864,243 people in 2025, +12.2% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "home_services",
+  "metro_code": "22180",
+  "metro_name": "Fayetteville, NC",
+  "headline": "Fayetteville homes, kept ready for every move",
+  "audience": "Military families who move often and need homes maintained quickly.",
+  "angles": [
+   "Move-in and move-out cleaning",
+   "Maintenance while you're deployed"
+  ],
+  "local_context": [
+   "Home cleaning at 1.7x the typical share",
+   "A large military community"
+  ],
+  "grounded_in": [
+   "home cleaning: 1.69x the typical metro's share of businesses",
+   "home improvement store: 1.07x the typical metro's share of businesses",
+   "roofing: 1.04x the typical metro's share of businesses",
+   "395,412 people in 2025, +1.6% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "home_services",
+  "metro_code": "12260",
+  "metro_name": "Augusta-Richmond County, GA-SC",
+  "headline": "Augusta homes, ready for southern summers",
+  "audience": "Homeowners in a growing metro (+4.7% since 2020) on the Georgia-South Carolina line.",
+  "angles": [
+   "AC care before the heat",
+   "Cleaning on a schedule"
+  ],
+  "local_context": [
+   "Home cleaning at 1.2x the typical share",
+   "Golf country and southern food"
+  ],
+  "grounded_in": [
+   "home cleaning: 1.22x the typical metro's share of businesses",
+   "plumbing: 0.98x the typical metro's share of businesses",
+   "hvac service: 0.97x the typical metro's share of businesses",
+   "641,231 people in 2025, +4.7% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "home_services",
+  "metro_code": "24340",
+  "metro_name": "Grand Rapids-Wyoming-Kentwood, MI",
+  "headline": "Grand Rapids homes through four seasons",
+  "audience": "Homeowners in West Michigan who prepare for long winters.",
+  "angles": [
+   "Furnace checks before winter",
+   "Spring roof and gutter care"
+  ],
+  "local_context": [
+   "Home improvement stores at about the typical share",
+   "Manufacturing jobs and lakes nearby"
+  ],
+  "grounded_in": [
+   "home improvement store: 1.06x the typical metro's share of businesses",
+   "plumbing: 1x the typical metro's share of businesses",
+   "hardware store: 0.99x the typical metro's share of businesses",
+   "1,183,645 people in 2025, +2.8% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "beauty_wellness",
+  "metro_code": "44180",
+  "metro_name": "Springfield, MO",
+  "headline": "Springfield's med-spa crowd",
+  "audience": "Adults in a growing Ozarks metro (+5.1% since 2020) who visit med spas.",
+  "angles": [
+   "Skincare that extends med-spa results",
+   "Wellness on a budget"
+  ],
+  "local_context": [
+   "Medical spas at 1.4x the typical share",
+   "Ozarks lakes and outdoor life"
+  ],
+  "grounded_in": [
+   "medical spa: 1.36x the typical metro's share of businesses",
+   "spa: 1.05x the typical metro's share of businesses",
+   "hair salon: 1.04x the typical metro's share of businesses",
+   "500,694 people in 2025, +5.1% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "beauty_wellness",
+  "metro_code": "22220",
+  "metro_name": "Fayetteville-Springdale-Rogers, AR",
+  "headline": "Northwest Arkansas is growing fast",
+  "audience": "Young professionals and families moving in (+13.1% since 2020).",
+  "angles": [
+   "Routines for a new city",
+   "Wellness for busy weeks"
+  ],
+  "local_context": [
+   "Medical spas at 1.2x the typical share",
+   "Food trucks and Ozark cabins"
+  ],
+  "grounded_in": [
+   "medical spa: 1.18x the typical metro's share of businesses",
+   "vitamin and supplement store: 1.02x the typical metro's share of businesses",
+   "spa: 0.95x the typical metro's share of businesses",
+   "622,177 people in 2025, +13.1% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "beauty_wellness",
+  "metro_code": "46060",
+  "metro_name": "Tucson, AZ",
+  "headline": "Tucson skin needs sun care",
+  "audience": "Adults in a hot, sunny desert metro who already use med spas.",
+  "angles": [
+   "Sun repair and hydration",
+   "Supplements for hot, active days"
+  ],
+  "local_context": [
+   "Medical spas at 1.6x the typical share",
+   "Mountains, desert sun and national parks"
+  ],
+  "grounded_in": [
+   "medical spa: 1.63x the typical metro's share of businesses",
+   "vitamin and supplement store: 1.19x the typical metro's share of businesses",
+   "nail salon: 1.08x the typical metro's share of businesses",
+   "1,074,685 people in 2025, +2.8% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "beauty_wellness",
+  "metro_code": "19780",
+  "metro_name": "Des Moines-West Des Moines, IA",
+  "headline": "Des Moines wellness, close to home",
+  "audience": "Health-conscious adults in a growing metro (+6.7% since 2020).",
+  "angles": [
+   "Supplements that fit a Midwest routine",
+   "Self-care for long winters"
+  ],
+  "local_context": [
+   "Supplement stores at 1.1x the typical share",
+   "Insurance and agriculture jobs"
+  ],
+  "grounded_in": [
+   "vitamin and supplement store: 1.14x the typical metro's share of businesses",
+   "hair salon: 1.04x the typical metro's share of businesses",
+   "health food store: 1.02x the typical metro's share of businesses",
+   "758,539 people in 2025, +6.7% since 2020 (Census)"
+  ]
+ },
+ {
+  "preset": "beauty_wellness",
+  "metro_code": "17820",
+  "metro_name": "Colorado Springs, CO",
+  "headline": "Colorado Springs takes care of itself",
+  "audience": "Active adults and military families at altitude.",
+  "angles": [
+   "Skincare for dry mountain air",
+   "Supplements for an active lifestyle"
+  ],
+  "local_context": [
+   "Medical spas at 1.7x the typical share",
+   "Pikes Peak and a large military community"
+  ],
+  "grounded_in": [
+   "medical spa: 1.67x the typical metro's share of businesses",
+   "vitamin and supplement store: 1.19x the typical metro's share of businesses",
+   "health food store: 1.14x the typical metro's share of businesses",
+   "781,796 people in 2025, +3.1% since 2020 (Census)"
   ]
  }
 ]

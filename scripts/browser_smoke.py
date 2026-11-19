@@ -4,8 +4,8 @@ Fails on any console error, page error, CSP violation, or accessibility
 violation (axe-core), and walks the main flow: pick a competitor, add a second
 one, add your own chain (only near it, then skip near it), check the results,
 export both CSV formats, reload from the shareable URL, open an old-style link,
-upload a store list, toggle map layers, pick a metro area, combine areas, and
-switch to dark mode. Saves screenshots.
+upload a store list, toggle map layers, pick a metro area, combine areas, show
+only locations added since the last data release, and switch to dark mode. Saves screenshots.
 
 Usage:
     uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000
@@ -222,6 +222,22 @@ def main() -> None:
             f"{args.metro} metro + {args.state}: {n_union}",
             problems,
         )
+
+        # 6c-bis. Added since the previous data release (when the data has it).
+        if metro.locator("#only-new-field").is_visible():
+            before = count(metro)
+            metro.check("#only-new")
+            wait_idle(metro)
+            n_new, detail = count(metro), metro.inner_text("#summary-detail")
+            check(
+                n_new < before and "only added since" in detail and "new=1" in metro.url,
+                f"only added since the last data: {n_new} of {before}",
+                problems,
+            )
+            metro.uncheck("#only-new")
+            wait_idle(metro)
+        else:
+            print("skip only-added check: this data has no change view")
 
         # 6d. Dark mode: toggle, accessible, and remembered across reloads.
         metro.click("#theme-toggle")

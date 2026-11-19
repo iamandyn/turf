@@ -367,3 +367,55 @@ def test_own_locations_outside_the_metro_still_count(client: TestClient) -> None
         own_radius_mi=20,
     )
     assert "ind" in target_ids(near_edge)  # Joe's Coffee at (30.0, -97.5), ~16 mi away
+
+
+# --- New since the previous release ---
+
+
+def test_no_change_view_in_older_serving_files(client: TestClient) -> None:
+    data = post(client, chain_keys=["starbucks"])
+    assert data["previous_release"] is None and data["new_count"] == 0 and data["gone"] == []
+    assert not any(t["is_new"] for t in data["targets"])
+    resp = client.post("/api/targets", json={"chain_keys": ["starbucks"], "only_new": True})
+    assert resp.status_code == 422 and "isn't available" in resp.json()["detail"]
+    assert client.get("/api/meta").json()["previous_release"] is None
+
+
+def test_new_locations_flagged_and_counted(changes_client: TestClient) -> None:
+    data = post(changes_client, chain_keys=["starbucks", "orangetheory fitness"])
+    assert data["previous_release"] == "prev-release"
+    new = {t["id"] for t in data["targets"] if t["is_new"]}
+    assert new == {"sb1", "otf2"} and data["new_count"] == 2
+    assert changes_client.get("/api/meta").json()["previous_release"] == "prev-release"
+
+
+def test_only_new(changes_client: TestClient) -> None:
+    data = post(changes_client, chain_keys=["starbucks", "orangetheory fitness"], only_new=True)
+    assert target_ids(data) == {"sb1", "otf2"}
+    # With your locations: only new competitor locations near yours.
+    near = post(changes_client, chain_keys=["starbucks"], only_new=True, own_chain_key="dunkin")
+    assert target_ids(near) == {"sb1"}
+
+
+def test_only_new_is_for_chains(changes_client: TestClient) -> None:
+    body = {"category": "coffee_shop", "only_new": True}
+    assert changes_client.post("/api/targets", json=body).status_code == 422
+
+
+def test_gone_locations_follow_chain_and_area(changes_client: TestClient) -> None:
+    everywhere = post(changes_client, chain_keys=["starbucks"])
+    assert {g["id"] for g in everywhere["gone"]} == {"old-sb", "old-sb-ca"}
+    texas = post(changes_client, chain_keys=["starbucks"], states=["TX"])
+    assert [g["id"] for g in texas["gone"]] == ["old-sb"]
+    sf_metro = post(changes_client, chain_keys=["starbucks"], metros=["41860"])
+    assert [g["id"] for g in sf_metro["gone"]] == ["old-sb-ca"]  # tagged with its metro
+    assert post(changes_client, chain_keys=["orangetheory fitness"])["gone"] == []
+
+
+def test_export_marks_new_locations(changes_client: TestClient) -> None:
+    rows, _ = export(changes_client, "generic", chain_keys=["starbucks"])
+    header, *body = rows
+    flags = {
+        r[header.index("overture_id")]: r[header.index("new_since_last_release")] for r in body
+    }
+    assert flags == {"sb1": "yes", "sb2": ""}

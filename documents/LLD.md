@@ -17,7 +17,8 @@ The steps run in order on a dev machine. Each one reads the previous step's file
 | 1b | `scripts/extract_states.py` | S3 divisions | `us_states.parquet` (7 MB) | seconds |
 | 1c | `scripts/extract_metros.py` | Census CBSA boundaries (pinned download) | `us_metros.parquet` (5 MB) | seconds |
 | 2 | `scripts/build_chains.py` | steps 1, 1b | `places.parquet`, `chains.parquet`, `chains_manifest.json` | ~3 min / 8.6 GB |
-| 3 | `scripts/build_serving_db.py` | steps 2, 1c | `turf.duckdb` (1.36 GB) | 27 s / 4.6 GB (`--memory-limit`, default 4 GB) |
+| 2b | `scripts/build_changes.py --previous <release>` | step 2 for this **and** the previous release | `changes.parquet`, `changes_manifest.json` | ~7 s / 2 GB |
+| 3 | `scripts/build_serving_db.py [--previous <release>]` | steps 2, 1c (2b with `--previous`) | `turf.duckdb` (1.36 GB) | 27 s / 4.6 GB (`--memory-limit`, default 4 GB) |
 | checks | `scripts/check_extract.py`, `scripts/investigate_chain.py` | steps 1, 2 | stdout | seconds |
 
 All steps take `--release` (e.g. `2026-11-18.0`). List the available releases with a DuckDB `glob('s3://overturemaps-us-west-2/release/*/theme=places/type=place/*')`; S3 keeps only the last few.
@@ -53,6 +54,20 @@ See §2 for the rules. Output `places.parquet` columns:
 
 `chains_manifest.json` records totals, the state-fill report, and spot-check counts for four known chains. **Compare it between releases**: large swings in the spot checks mean a rule broke or the upstream data changed.
 
+### 1.3b Step 2b: added and removed chain locations (`build_changes.py` → `changes.build_changes()`)
+
+Compares this release's chain locations (non-duplicate) with the previous release's. A location is **added** if its ID is new, no location of the same chain was within **150 m** last month, and none had the same normalized address (lowercase alphanumerics) within **2 km**; **removed** is the reverse. Chains whose added + removed exceeds **25%** of their size (minimum 5) are dropped as chain-matching artifacts and listed in the manifest (`unstable_examples`).
+
+**Measured on 2026-10-21.0 → 2026-11-18.0** (2.06M → 2.10M chain locations):
+- By ID alone, 154,844 locations were "new" and 117,443 "gone".
+- 3,145 chains were unstable. These were whole groupings flipping when upstream brand tags changed: "atm" (24,669 gone), "hair" (18,489 new), all of Jiffy Lube (2,535 gone), and "Sprint" (3,064 new, a brand that ended in 2020).
+- The address rule caught re-geocoded stores: of 255 Starbucks "new" by ID, 141 had a Starbucks within 500 m the month before.
+- What remains: 57,441 added and 31,972 removed. This is still mostly coverage change, not openings and closures. Subway shows 2,142 added, about 9% of the chain in one month.
+
+So the product frames the result as **campaign list maintenance**: "added since the Oct 21 data" is exactly what to add to a campaign built from last month's list, and "removed" is what to take out. It never claims "opened" or "closed". Independents aren't compared, because their churn between releases is too high for a per-business diff to mean anything.
+
+**Check the manifest every release**: `top_movers` and `unstable_examples` show when an upstream change is distorting the numbers.
+
 ### 1.4 Step 3: serving database (`serving.write_serving_db()`)
 
 The file is written to `turf.duckdb.building`, then renamed, so a reader never sees a half-written file.
@@ -63,13 +78,15 @@ The file is written to `turf.duckdb.building`, then renamed, so a reader never s
 | `chains` | `chain_key, display_name, categories, n_total, n_open`; only chains with at least 1 open location |
 | `categories` | `category_key` (e.g. `pet_groomer`), `label` ("Pet groomer"), `search_key` ("pet groomer"), `parent` (most common `basic_category`), `n_total, n_open`; only categories with at least 1 open place |
 | `metros` | `metro_code, name, kind, search_key, n_total, n_open, min_lat, min_lon, max_lat, max_lon` (the extent of its places, to frame it on the map); only areas with at least 1 place: 925 |
-| `meta` | `release, schema_version (3), built_at_utc` |
+| `meta` | `release, schema_version (4), built_at_utc, previous_release` (null without `--previous`) |
+| `places.is_new` | with `--previous` only: the place is in `changes.parquet` as added |
+| `gone_locations` | with `--previous` only: removed chain locations (`id, name, chain_key, address, locality, state, postcode, lat, lon, metro`), metro-tagged like places |
 
 **Metro tagging** is a point-in-polygon join of the unique places against `us_metros.parquet`, written as an **inner** join into a temp table and then left-joined by id: DuckDB plans the inner `ST_Contains` join with its spatial join operator (about 14 s for 18M points), while a LEFT spatial join would fall back to a nested loop. CBSAs don't overlap, so each place gets at most one metro. Metro membership comes from coordinates, not the address, so it's unaffected by bad address states: about 1,100 places inside the New York metro have an address state that isn't NY or NJ. The API never loads the spatial extension; it reads the plain `metro` code.
 
 Result: 18,226,778 places, 40,026 chains, 2,060 categories, and 925 metro areas (1.36 GB).
 
-Schema history: v1 had no categories; v2 added `places.category` and the `categories` table; **v3** added `places.metro` and the `metros` table. Each time, old code runs against the new file but new code needs the new data, so **deploy the data first** (`scripts/deploy_data.sh`), then push the code.
+Schema history: v1 had no categories; v2 added `places.category` and the `categories` table; **v3** added `places.metro` and the `metros` table; **v4** adds the change view (`places.is_new`, `gone_locations`, `meta.previous_release`) when built with `--previous`. For v1–v3, old code ran against the new file but new code needed the new data, so data had to deploy first. **From v4 the API detects the change view at startup** (`_previous_release` in `api.py`) and hides it when the file doesn't have it, so code and data can deploy in either order.
 
 ---
 
@@ -160,7 +177,7 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 | Method and path | Params / body | Returns | Errors |
 |---|---|---|---|
 | `GET /healthz` | | `{"status":"ok"}` (runs `SELECT 1`) | |
-| `GET /api/meta` | | `{commit, release, built_at_utc, places, chains}` | |
+| `GET /api/meta` | | `{commit, release, previous_release, built_at_utc, places, chains}` (`previous_release` null when the data has no change view) | |
 | `GET /api/search` | `q` (2–80 chars), `kind` (`chain`/`category`, optional), `limit` (1–25) | `[SearchResult]`: chains and categories ranked together | 422 |
 | `GET /api/chains/search` | `q` (2–80 chars), `limit` (1–25, default 10) | `[ChainSummary]` (chains only; kept for API users) | 422 |
 | `GET /api/metros/search` | `q` (2–80 chars), `limit` (1–25) | `[Metro]`: `{metro_code, name, kind, n_open, n_total, bounds: [min_lon, min_lat, max_lon, max_lat]}`, same tiers as chain search, then metros before micros, then size | 422 |
@@ -195,6 +212,7 @@ Within a tier, entries with more open locations come first. `/api/search` uses t
 | `own_locations` | your stores as `[{name?, lat, lon}]`, ≤ 5,000 (`MAX_UPLOADED_LOCATIONS`); the frontend fills it from an uploaded CSV. Combines with `own_chain_key` | none |
 | `own_filter` | `only_near` (keep targets within `own_radius_mi` of yours) or `skip_near` (drop them) | `only_near` |
 | `own_radius_mi` | 0.1–50 | 3 for `only_near`, 1 for `skip_near` |
+| `only_new` | only chain locations added since `previous_release`; chains only (422 with a category; 422 when the data has no change view) | false |
 | `campaign_name` | ≤ 200 chars | `Turf - <key>`: the chain key, `<first> and <n> more`, or the category |
 
 **Why `only_near` is the default.** Geo-conquesting works when the competitor's customers could realistically switch: someone leaving a Planet Fitness 40 miles from your nearest gym won't. So the useful list is competitor locations *near* yours. `skip_near` (the original behavior) is still there for when you'd otherwise pay to reach your own customers.
@@ -205,13 +223,13 @@ Within a tier, entries with more open locations come first. `/api/search` uses t
 3. Each candidate's nearest own location is found by haversine distance (miles), prefiltered to a latitude window of `own_radius_mi / 69 + 0.01` degrees, and kept if ≤ `own_radius_mi`.
 4. `only_near`: candidates with a nearest own location are targets (with `nearest_own_location`, `distance_mi`); the rest are dropped as `far_from_yours` (their nearest store isn't computed, by design of the window). `skip_near`: the reverse, dropped as `near_yours` with the distance.
 
-`TargetResponse = {chain_keys, category, metros, radius_mi, own_filter, own_radius_mi, own_location_count, candidates, dropped_count, targets: [Target], dropped: [Dropped]}`. `Target` carries `chain_key` (which competitor) and, when near one of yours, `nearest_own_location` and `distance_mi`. `Dropped = {id, name, address, state, lat, lon, reason, nearest_own_location?, distance_mi?}`. `own_filter` and `own_radius_mi` are `null` when no own locations were given.
+The response adds the change view when available: `previous_release`, `new_count` (targets that are added), each `Target.is_new`, and `gone` (the chains' removed locations within the chosen areas, without the own-location filter). `TargetResponse = {chain_keys, category, metros, radius_mi, own_filter, own_radius_mi, own_location_count, candidates, dropped_count, targets: [Target], dropped: [Dropped]}`. `Target` carries `chain_key` (which competitor) and, when near one of yours, `nearest_own_location` and `distance_mi`. `Dropped = {id, name, address, state, lat, lon, reason, nearest_own_location?, distance_mi?}`. `own_filter` and `own_radius_mi` are `null` when no own locations were given.
 
 **Performance** (`scripts/bench_targets.py`, real DB, API container limits of 2 threads / 1 GB): one chain 18 ms; only-near your chain 39 ms; three chains skip-near 82 ms; worst case, Subway (22,953) against 5,000 uploaded stores at 50 mi, 445 ms.
 
 **CSV formats** (`to_csv`):
 - `google_ads_editor`: header `Campaign,Location`; each row is `<campaign>,(<r>mi:<lat 6dp>:<lon 6dp>)`. The proximity format comes from Google Ads Editor's "Add multiple location targets" help page. **Verified manually on 2026-11-18:** a Turf export loaded into Google Ads Editor with every location resolving as a radius target. Editor's *file import* gives "A required account column is missing" if you choose "My data includes account information"; choose "Use selected accounts" instead, or paste through Locations → Make multiple changes. The `Campaign` value must match an existing campaign. Radius is written with `:g`, so `1` stays `1` and `2.5` stays `2.5`.
-- `generic`: `name,address,city,state,postcode,latitude,longitude,radius,radius_unit,status,overture_id,nearest_yours,miles_to_yours`. Status is `open` or `unverified`. The last two are filled when the target is within the own radius of one of your locations.
+- `generic`: `name,address,city,state,postcode,latitude,longitude,radius,radius_unit,status,overture_id,nearest_yours,miles_to_yours,new_since_last_release`. Status is `open` or `unverified`. The last two are filled when the target is within the own radius of one of your locations.
 
 The filename comes from `TargetRequest.target_key` (e.g. `turf-orangetheory-fitness-and-1-more-generic.csv`), reduced to `[a-z0-9-]`, so it's safe in `Content-Disposition`.
 
@@ -236,6 +254,7 @@ The filename comes from `TargetRequest.target_key` (e.g. `turf-orangetheory-fitn
 | `parseStoreList` | client-side CSV parsing for the upload: comma/semicolon/tab, quoted fields, BOM. Finds `lat/latitude/y` and `lon/lng/long/longitude/x` columns (else the first two numeric columns of a headerless file), a name or address column, skips rows without valid coordinates (and reports how many), swaps columns if every row looks like (lon, lat) in the US, caps at 5,000 rows / 5 MB. Addresses alone are refused: no geocoding |
 | `refresh` | `POST /api/targets`, plus `GET /api/chains/{own}/locations?include_unverified=true` when you set your chain (uploaded points are drawn from memory); a request counter drops stale responses |
 | map | GeoJSON sources `targets`, `dropped`, `own`. Radius circles are drawn at true scale with a zoom-interpolated `circle-radius` (meters ÷ Web Mercator meters-per-pixel × cos(lat)), so there's no polygon generation even for 17k targets. `updateZoomHint` shows "Zoom in to see each target's ad radius" when the circle would be under 4 px at the map center. The legend buttons (`aria-pressed`) toggle layer groups via `setLayerVisible` |
+| change view | shown only when `/api/meta` has `previous_release` and the targets are chains (`changesAvailable`). "Only locations added since the Oct 21 data" toggle (`?new=1`); added targets get an "added" tag, a thicker ring on the map (`is_new` in the paint) and a popup line; a collapsed "N removed since Oct 21" list. `/api/meta` is awaited before the first render |
 | lists | targets, and a collapsed "N skipped" list with the reason, each showing the distance to your nearest location when known |
 | export | `POST /api/targets/export`, then downloads the blob with the server's filename |
 | theme | light/dark from CSS tokens on `:root`, overridden under `prefers-color-scheme: dark` unless `data-theme="light"`, and forced by `data-theme="dark"`. The header toggle sets `data-theme` and saves it in `localStorage` (`turf-theme`); `web/theme.js` applies a saved choice in `<head>` before first paint (a file, since the CSP blocks inline scripts). With no saved choice it follows the system live. The basemap swaps between OpenFreeMap `positron` and `dark` with `setStyle(…, {transformStyle})`, which carries Turf's sources (with data) and layers over; layer colors are read from the CSS tokens (`themeLayerPaint`) |

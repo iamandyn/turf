@@ -26,6 +26,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from turf_app.normalize import normalize_text
 from turf_app.ratelimit import RateLimiter
 from turf_app.targets import (
+    ChangesUnavailableError,
     ExportFormat,
     TargetRequest,
     TargetResponse,
@@ -102,6 +103,8 @@ FUZZY_MIN_SIMILARITY = 0.88
 class Meta(BaseModel):
     commit: str
     release: str
+    # The release "new since" compares against; null when the file has no change data.
+    previous_release: str | None
     built_at_utc: datetime
     places: int
     chains: int
@@ -178,6 +181,20 @@ def _cursor(request: Request) -> Iterator[duckdb.DuckDBPyConnection]:
 Db = Annotated[duckdb.DuckDBPyConnection, Depends(_cursor)]
 
 
+def _previous_release(con: duckdb.DuckDBPyConnection) -> str | None:
+    """The change view's baseline, if this serving file has one (schema v4 built
+    with changes). Older files work without it, so code can deploy before data."""
+    has = con.execute("""
+        SELECT count(*) = 2 FROM information_schema.columns
+        WHERE (table_name = 'meta' AND column_name = 'previous_release')
+           OR (table_name = 'places' AND column_name = 'is_new')
+    """).fetchone()
+    if not has or not has[0]:
+        return None
+    row = con.execute("SELECT previous_release FROM meta").fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
 def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = None) -> FastAPI:
     path = db_path or Path(os.environ.get("TURF_DB", "data/turf.duckdb"))
     # Baked into the image at build time, so CI can check the live site runs
@@ -201,6 +218,7 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             },
         )
         app.state.db = con
+        app.state.previous_release = _previous_release(con)
         try:
             yield
         finally:
@@ -241,7 +259,7 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         return {"status": "ok"}
 
     @app.get("/api/meta")
-    def meta(db: Db) -> Meta:
+    def meta(db: Db, request: Request) -> Meta:
         row = db.execute("""
             SELECT m.release, m.built_at_utc,
                    (SELECT count(*) FROM places), (SELECT count(*) FROM chains)
@@ -249,7 +267,12 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         """).fetchone()
         assert row is not None
         return Meta(
-            commit=commit, release=row[0], built_at_utc=row[1], places=row[2], chains=row[3]
+            commit=commit,
+            release=row[0],
+            previous_release=request.app.state.previous_release,
+            built_at_utc=row[1],
+            places=row[2],
+            chains=row[3],
         )
 
     @app.get("/api/chains/search")
@@ -425,27 +448,29 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             locations=[Location(**dict(zip(fields, r, strict=True))) for r in rows],
         )
 
-    def _targets_or_404(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetResponse:
+    def _targets_or_404(
+        db: duckdb.DuckDBPyConnection, req: TargetRequest, request: Request
+    ) -> TargetResponse:
         try:
-            return build_targets(db, req)
+            return build_targets(db, req, request.app.state.previous_release)
         except UnknownChainError as e:
             raise HTTPException(status_code=404, detail=f"Unknown chain: {e}") from e
         except UnknownCategoryError as e:
             raise HTTPException(status_code=404, detail=f"Unknown category: {e}") from e
         except UnknownMetroError as e:
             raise HTTPException(status_code=404, detail=f"Unknown metro area: {e}") from e
-        except TooManyTargetsError as e:
+        except (TooManyTargetsError, ChangesUnavailableError) as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 
     @app.post("/api/targets")
-    def targets(db: Db, req: TargetRequest) -> TargetResponse:
-        return _targets_or_404(db, req)
+    def targets(db: Db, req: TargetRequest, request: Request) -> TargetResponse:
+        return _targets_or_404(db, req, request)
 
     @app.post("/api/targets/export")
     def export_targets(
-        db: Db, req: TargetRequest, format: ExportFormat = ExportFormat.generic
+        db: Db, req: TargetRequest, request: Request, format: ExportFormat = ExportFormat.generic
     ) -> Response:
-        result = _targets_or_404(db, req)
+        result = _targets_or_404(db, req, request)
         campaign = req.campaign_name or f"Turf - {req.target_key}"
         # Keep the filename header safe whatever the key contains.
         slug = re.sub(r"[^a-z0-9]+", "-", req.target_key.lower()).strip("-") or "targets"

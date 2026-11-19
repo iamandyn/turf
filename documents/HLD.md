@@ -8,7 +8,7 @@ Turf turns open Overture Maps data into **ad-ready location target lists for geo
 
 A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or a whole category (e.g. pet boarding: every such business, chains and independents), optionally a state or metro area and their own locations (their chain in Overture, an uploaded store list, or both), and gets the competitors' US locations as radius targets: by default only those near the user's own locations, where customers could switch, or alternatively all except those near them. Each target is a lat/lng plus a radius, and the list exports as a Google Ads Editor CSV or a generic CSV for Meta and other tools.
 
-**Users:** media buyers and local marketers running location-based campaigns.
+**Users:** agency media buyers (many clients, each with its own competitive set) and local marketers running location-based campaigns. An in-house marketer sets it up once; for them the ongoing value is the monthly change view (competitor locations added to or removed from the data since last month, to keep a running campaign's list current).
 
 **Why Overture:** it's free, covers the whole US, and has the one thing this needs: where businesses are, what category they are, and which brand they belong to. It has no demographics or foot traffic, so Turf only makes claims that location and brand data can support.
 

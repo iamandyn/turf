@@ -108,6 +108,10 @@ class TargetRequest(BaseModel):
         le=MAX_RADIUS_MI,
         description="Miles from your locations; default 3 (only_near) or 1 (skip_near)",
     )
+    only_new: bool = Field(
+        default=False,
+        description="Only chain locations added since the previous data release (chains only)",
+    )
     campaign_name: str | None = Field(default=None, max_length=200)
 
     @field_validator("chain_keys")
@@ -137,6 +141,8 @@ class TargetRequest(BaseModel):
             raise ValueError("Your own chain can't also be a competitor")
         if self.own_locations == []:
             self.own_locations = None
+        if self.only_new and self.category:
+            raise ValueError("New locations are tracked for chains, not categories")
         return self
 
     @property
@@ -167,6 +173,9 @@ class Target(BaseModel):
     postcode: str | None
     lat: float
     lon: float
+    # New since the previous data release (see changes.py); always false when
+    # the serving file has no change data.
+    is_new: bool = False
     # Set when you gave your own locations and the target is within the own
     # radius of one (always, for only_near).
     nearest_own_location: str | None = None
@@ -191,6 +200,19 @@ class Dropped(BaseModel):
     distance_mi: float | None = None
 
 
+class Gone(BaseModel):
+    """A competitor location in the previous release with no match in this one."""
+
+    id: str
+    name: str
+    chain_key: str
+    address: str | None
+    locality: str | None
+    state: str | None
+    lat: float
+    lon: float
+
+
 class TargetResponse(BaseModel):
     chain_keys: list[str] | None
     category: str | None
@@ -203,6 +225,11 @@ class TargetResponse(BaseModel):
     dropped_count: int
     targets: list[Target]
     dropped: list[Dropped]
+    # Change view, when the serving file has it: the release compared against,
+    # how many targets are new, and the chains' gone locations in the chosen areas.
+    previous_release: str | None = None
+    new_count: int = 0
+    gone: list[Gone] = []
 
 
 class UnknownChainError(LookupError):
@@ -215,6 +242,11 @@ class UnknownCategoryError(LookupError):
 
 class UnknownMetroError(LookupError):
     pass
+
+
+class ChangesUnavailableError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("New-location tracking isn't available for this data release.")
 
 
 class TooManyTargetsError(ValueError):
@@ -249,19 +281,21 @@ def _check_category(db: duckdb.DuckDBPyConnection, category: str) -> None:
         raise UnknownCategoryError(category)
 
 
-# Candidate filter shared by the size check and the main query. Your own
-# chain's locations are never targets (they can turn up in a category).
-_CANDIDATE_FILTER = """
-    ($chains IS NULL OR list_contains($chains, chain_key))
-    AND ($category IS NULL OR category = $category)
-    AND ($unverified OR status = 'open')
-    -- Areas are a union: in any chosen state OR any chosen metro area, so
-    -- "Texas + Oklahoma City metro" covers both. No areas means the whole US.
-    AND (
+# Areas are a union: in any chosen state OR any chosen metro area, so
+# "Texas + Oklahoma City metro" covers both. No areas means the whole US.
+_AREA_FILTER = """(
         ($states IS NULL AND $metros IS NULL)
         OR coalesce(list_contains($states, state), false)
         OR coalesce(list_contains($metros, metro), false)
-    )
+    )"""
+
+# Candidate filter shared by the size check and the main query. Your own
+# chain's locations are never targets (they can turn up in a category).
+_CANDIDATE_FILTER = f"""
+    ($chains IS NULL OR list_contains($chains, chain_key))
+    AND ($category IS NULL OR category = $category)
+    AND ($unverified OR status = 'open')
+    AND {_AREA_FILTER}
     AND ($own IS NULL OR chain_key IS DISTINCT FROM $own)
 """
 
@@ -282,7 +316,12 @@ def _own_locations_sql(req: TargetRequest) -> str:
     return " UNION ALL ".join(parts)
 
 
-def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetResponse:
+def build_targets(
+    db: duckdb.DuckDBPyConnection, req: TargetRequest, previous_release: str | None = None
+) -> TargetResponse:
+    """``previous_release`` is set when the serving file has change data (places.is_new)."""
+    if req.only_new and previous_release is None:
+        raise ChangesUnavailableError()
     for key in req.chain_keys or []:
         _check_chain(db, key)
     if req.category:
@@ -300,8 +339,9 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
         "metros": req.metros,
         "own": req.own_chain_key,
     }
+    candidate_filter = _CANDIDATE_FILTER + (" AND is_new" if req.only_new else "")
     count_row = db.execute(
-        f"SELECT count(*) FROM places WHERE {_CANDIDATE_FILTER}", filters
+        f"SELECT count(*) FROM places WHERE {candidate_filter}", filters
     ).fetchone()
     count = int(count_row[0]) if count_row else 0
     if count > MAX_TARGETS:
@@ -310,12 +350,15 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
     target_fields = [
         f for f in Target.model_fields if f not in ("nearest_own_location", "distance_mi")
     ]
-    columns = ", ".join(target_fields)
+    columns = ", ".join(
+        "false AS is_new" if f == "is_new" and previous_release is None else f
+        for f in target_fields
+    )
     own_radius = req.effective_own_radius_mi
     own_count = 0
     if not req.has_own:
         rows = db.execute(
-            f"SELECT {columns}, NULL, NULL FROM places WHERE {_CANDIDATE_FILTER} "
+            f"SELECT {columns}, NULL, NULL FROM places WHERE {candidate_filter} "
             "ORDER BY state, locality, id",
             filters,
         ).fetchall()
@@ -339,7 +382,7 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
         rows = db.execute(
             f"""
             WITH candidates AS (
-                SELECT {columns} FROM places WHERE {_CANDIDATE_FILTER}
+                SELECT {columns} FROM places WHERE {candidate_filter}
             ),
             own AS ({own_sql}),
             nearest AS (
@@ -389,6 +432,18 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
                 distance_mi=values.get("distance_mi"),
             )
         )
+    gone: list[Gone] = []
+    if previous_release is not None and req.chain_keys:
+        gone_rows = db.execute(
+            f"""
+            SELECT id, name, chain_key, address, locality, state, lat, lon
+            FROM gone_locations
+            WHERE list_contains($chains, chain_key) AND {_AREA_FILTER}
+            ORDER BY state, locality, id
+            """,
+            {"chains": req.chain_keys, "states": req.states, "metros": req.metros},
+        ).fetchall()
+        gone = [Gone(**dict(zip(Gone.model_fields, r, strict=True))) for r in gone_rows]
     return TargetResponse(
         chain_keys=req.chain_keys,
         category=req.category,
@@ -401,6 +456,9 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
         dropped_count=len(dropped),
         targets=targets,
         dropped=dropped,
+        previous_release=previous_release,
+        new_count=sum(t.is_new for t in targets),
+        gone=gone,
     )
 
 
@@ -422,7 +480,7 @@ def to_csv(result: TargetResponse, fmt: ExportFormat, campaign_name: str) -> str
             [
                 "name", "address", "city", "state", "postcode",
                 "latitude", "longitude", "radius", "radius_unit", "status", "overture_id",
-                "nearest_yours", "miles_to_yours",
+                "nearest_yours", "miles_to_yours", "new_since_last_release",
             ]
         )  # fmt: skip
         for t in result.targets:
@@ -432,6 +490,7 @@ def to_csv(result: TargetResponse, fmt: ExportFormat, campaign_name: str) -> str
                     f"{t.lat:.6f}", f"{t.lon:.6f}", radius, "mi", t.status or "unverified", t.id,
                     t.nearest_own_location or "",
                     "" if t.distance_mi is None else f"{t.distance_mi:g}",
+                    "yes" if t.is_new else "",
                 ]
             )  # fmt: skip
     return buf.getvalue()

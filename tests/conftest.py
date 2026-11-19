@@ -86,11 +86,39 @@ def serving_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     write_serving_db(
         d / "places.parquet", d / "chains.parquet", d / "metros.parquet", db, "test-release"
     )
+    # The same data with a change view against a previous release.
+    con.execute("""
+        CREATE TABLE ch AS
+        SELECT * FROM (VALUES
+            ('new', 'sb1', 'Starbucks', 'starbucks', 'open', 'sb1 Main St', 'Austin', 'TX', '78701', 30.27, -97.74),
+            ('new', 'otf2', 'Orangetheory Fitness', 'orangetheory fitness', 'open', 'otf2 Main St', 'Austin', 'CA', '78701', 34.0, -118.2),
+            ('gone', 'old-sb', 'Starbucks', 'starbucks', 'open', '1 Old Rd', 'Austin', 'TX', '78701', 30.25, -97.75),
+            ('gone', 'old-sb-ca', 'Starbucks', 'starbucks', 'open', '2 Old Rd', 'Oakland', 'CA', '94601', 37.8, -122.27)
+        ) t(change, id, name, chain_key, status, address, locality, state, postcode, lat, lon)
+    """)
+    con.execute(f"COPY ch TO '{d / 'changes.parquet'}' (FORMAT parquet)")
+    write_serving_db(
+        d / "places.parquet",
+        d / "chains.parquet",
+        d / "metros.parquet",
+        d / "turf_changes.duckdb",
+        "test-release",
+        changes=d / "changes.parquet",
+        previous_release="prev-release",
+    )
     return db
 
 
 @pytest.fixture(scope="session")
 def client(serving_db: Path) -> Iterator[TestClient]:
-    # Rate limiting off here; it has its own tests.
+    # Rate limiting off here; it has its own tests. This file has no change
+    # view, like serving files built before it existed.
     with TestClient(create_app(serving_db, rate_limiter=RateLimiter(rules=()))) as c:
+        yield c
+
+
+@pytest.fixture(scope="session")
+def changes_client(serving_db: Path) -> Iterator[TestClient]:
+    db = serving_db.with_name("turf_changes.duckdb")
+    with TestClient(create_app(db, rate_limiter=RateLimiter(rules=()))) as c:
         yield c

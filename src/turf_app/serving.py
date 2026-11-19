@@ -11,12 +11,25 @@ from pathlib import Path
 
 import duckdb
 
-SCHEMA_VERSION = 3  # 2: places.category + categories table; 3: places.metro + metros table
+SCHEMA_VERSION = 4
+# 2: places.category + categories table; 3: places.metro + metros table;
+# 4: places.is_new + gone_locations + meta.previous_release (when built with changes)
 
 
 def write_serving_db(
-    places: Path, chains: Path, metros: Path, out: Path, release: str, memory_limit: str = "4GB"
+    places: Path,
+    chains: Path,
+    metros: Path,
+    out: Path,
+    release: str,
+    memory_limit: str = "4GB",
+    changes: Path | None = None,
+    previous_release: str | None = None,
 ) -> None:
+    """Write the serving file. ``changes`` (from build_changes.py) adds the
+    new/gone view against ``previous_release``; without it, the API hides that view."""
+    if (changes is None) != (previous_release is None):
+        raise ValueError("changes and previous_release go together")
     tmp = out.with_name(out.name + ".building")
     tmp.unlink(missing_ok=True)
     # Without a limit DuckDB takes up to 80% of RAM; above the limit it spills to disk.
@@ -46,15 +59,25 @@ def write_serving_db(
             FROM unique_places p
             JOIN metro_areas m ON ST_Contains(m.geometry, ST_Point(p.lon, p.lat))
         """)
+        if changes is not None:
+            con.execute(
+                "CREATE TEMP TABLE changes AS SELECT * FROM read_parquet(?)", [str(changes)]
+            )
         # Sorted by chain so a chain's locations sit together on disk and
         # DuckDB can skip everything else when looking one up.
-        con.execute("""
+        # New since the previous release (chain locations only, see changes.py).
+        is_new = (
+            ", p.id IN (SELECT id FROM changes WHERE change = 'new') AS is_new"
+            if changes is not None
+            else ""
+        )
+        con.execute(f"""
             CREATE TABLE places AS
             SELECT p.id, p.name, p.chain_key, p.basic_category,
                    p.taxonomy_primary AS category, p.confidence,
                    p.operating_status AS status,
                    p.address, p.locality, p.state, p.postcode, p.lat, p.lon,
-                   pm.metro
+                   pm.metro {is_new}
             FROM unique_places p LEFT JOIN place_metro pm USING (id)
             ORDER BY p.chain_key, p.state
         """)
@@ -99,10 +122,22 @@ def write_serving_db(
             GROUP BY category
             HAVING n_open >= 1
         """)
+        if changes is not None:
+            # Chain locations in the previous release with no match now, tagged
+            # with their metro so area filters apply to them too.
+            con.execute("""
+                CREATE TABLE gone_locations AS
+                SELECT g.id, g.name, g.chain_key, g.address, g.locality, g.state, g.postcode,
+                       g.lat, g.lon, m.code AS metro
+                FROM changes g
+                LEFT JOIN metro_areas m ON ST_Contains(m.geometry, ST_Point(g.lon, g.lat))
+                WHERE g.change = 'gone'
+                ORDER BY g.chain_key, g.state
+            """)
         con.execute(
             "CREATE TABLE meta AS SELECT ?::VARCHAR AS release, ?::INT AS schema_version, "
-            "(now() AT TIME ZONE 'UTC') AS built_at_utc",
-            [release, SCHEMA_VERSION],
+            "(now() AT TIME ZONE 'UTC') AS built_at_utc, ?::VARCHAR AS previous_release",
+            [release, SCHEMA_VERSION, previous_release],
         )
         con.execute("CHECKPOINT")
     finally:

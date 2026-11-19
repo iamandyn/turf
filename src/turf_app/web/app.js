@@ -30,7 +30,9 @@ const state = {
   radiusMi: 1,
   ownRadiusMi: DEFAULT_OWN_RADIUS.only_near,
   unverified: false,
+  onlyNew: false,     // only chain locations new since the previous data release
 };
+let previousRelease = null;  // from /api/meta; null when the data has no change view
 const hasOwn = () => Boolean(state.own || state.uploaded);
 const isCategory = () => state.targets.length === 1 && state.targets[0].kind === "category";
 let lastResult = null;
@@ -81,8 +83,19 @@ function targetRequest() {
     own_locations: state.uploaded ? state.uploaded.locations : null,
     own_filter: state.ownFilter,
     own_radius_mi: state.ownRadiusMi,
+    only_new: state.onlyNew && changesAvailable(),
     campaign_name: $("campaign").value.trim() || null,
   };
+}
+
+// The change view applies to chains (not categories) when the data has it.
+const changesAvailable = () => Boolean(previousRelease) && state.targets.length > 0 && !isCategory();
+
+// "2026-10-21.0" -> "Oct 21"
+function releaseDate(release) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(release || "");
+  if (!m) return "last";
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 function areaKeys(kind) {
@@ -500,7 +513,10 @@ function themeLayerPaint() {
     "target-radius": { "circle-color": accent, "circle-stroke-color": accent },
     "dropped-point": { "circle-color": panel, "circle-stroke-color": skip },
     "own-point": { "circle-color": own, "circle-stroke-color": panel },
-    "target-point": { "circle-color": accent, "circle-stroke-color": panel },
+    "target-point": {
+      "circle-color": accent,
+      "circle-stroke-color": ["case", ["boolean", ["get", "is_new"], false], cssVar("--text"), panel],
+    },
   };
 }
 
@@ -626,7 +642,9 @@ async function setupLayers() {
     id: "target-point", type: "circle", source: "targets",
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 2, 10, 5],
-      "circle-color": "#e4572e", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1,
+      "circle-color": "#e4572e", "circle-stroke-color": "#ffffff",
+      // New since the previous release: a thicker ring in the text color.
+      "circle-stroke-width": ["case", ["boolean", ["get", "is_new"], false], 2.5, 1],
     },
   });
 
@@ -683,7 +701,9 @@ function describe(p) {
       ? `Skipped: ${p.distance_mi} mi from your ${p.nearest_own_location}`
       : `Skipped: none of your locations within ${state.ownRadiusMi} mi`;
   }
-  const status = p.status === "open" ? "Open (recent activity)" : "Unverified (no recent activity)";
+  if (p.kind === "gone") return `Removed since the ${releaseDate(previousRelease)} data (closed or no longer listed)`;
+  let status = p.status === "open" ? "Open (recent activity)" : "Unverified (no recent activity)";
+  if (p.is_new === true || p.is_new === "true") status = `Added since the ${releaseDate(previousRelease)} data · ${status}`;
   return has(p.distance_mi) ? `${status} · ${p.distance_mi} mi from your ${p.nearest_own_location}` : status;
 }
 
@@ -710,6 +730,12 @@ function renderList(olId, moreId, rows, kind) {
     li.tabIndex = 0;
     const name = document.createElement("div");
     name.textContent = t.name;
+    if (kind === "target" && t.is_new) {
+      const tag = document.createElement("span");
+      tag.className = "tag new";
+      tag.textContent = "added";
+      name.append(tag);
+    }
     if (kind === "target" && t.status !== "open") {
       const tag = document.createElement("span");
       tag.className = "tag";
@@ -720,10 +746,12 @@ function renderList(olId, moreId, rows, kind) {
     addr.className = "addr";
     addr.textContent = [t.address, t.locality, t.state].filter(Boolean).join(", ");
     li.append(name, addr);
-    if (kind === "dropped" || has(t.distance_mi)) {
+    if (kind === "dropped" || kind === "gone" || has(t.distance_mi)) {
       const why = document.createElement("div");
       why.className = "addr";
-      why.textContent = describe({ ...t, kind }).replace(/^Open \(recent activity\) · |^Unverified \(no recent activity\) · /, "");
+      why.textContent = describe({ ...t, kind })
+        .replace(/^Added since [^·]+ · /, "")
+        .replace(/^Open \(recent activity\) · |^Unverified \(no recent activity\) · /, "");
       li.append(why);
     }
     const go = () => {
@@ -747,7 +775,11 @@ function renderLists(result) {
   $("dropped-title").textContent = `${fmt.format(result.dropped.length)} skipped` +
     (state.ownFilter === "only_near" ? ` (not within ${state.ownRadiusMi} mi of yours)` : ` (within ${state.ownRadiusMi} mi of yours)`);
   $("dropped-section").hidden = result.dropped.length === 0;
-  $("list-section").hidden = result.targets.length === 0 && result.dropped.length === 0;
+  const gone = result.gone || [];
+  renderList("gone-list", "gone-more", gone, "gone");
+  $("gone-title").textContent = `${fmt.format(gone.length)} removed since ${releaseDate(previousRelease)}: take these out of a running campaign`;
+  $("gone-section").hidden = gone.length === 0;
+  $("list-section").hidden = result.targets.length === 0 && result.dropped.length === 0 && gone.length === 0;
 }
 
 function renderLegend() {
@@ -797,13 +829,19 @@ async function refresh({ fit = false } = {}) {
         ? `only within ${state.ownRadiusMi} mi of your ${ownLabel()} (${fmt.format(result.dropped_count)} farther skipped)`
         : `${fmt.format(result.dropped_count)} skipped within ${state.ownRadiusMi} mi of your ${ownLabel()}`);
     }
+    if (changesAvailable()) {
+      if (state.onlyNew) parts.push(`only added since ${releaseDate(previousRelease)}`);
+      else if (result.new_count) parts.push(`${fmt.format(result.new_count)} added since ${releaseDate(previousRelease)}`);
+    }
     if (!state.unverified) parts.push("confirmed-open only");
     $("summary-detail").textContent = parts.join(" · ");
     $("summary").hidden = false;
     $("export").hidden = result.targets.length === 0;
     if (!$("campaign").value) $("campaign").placeholder = `Turf - ${defaultCampaignKey()}`;
     if (result.targets.length === 0) {
-      showError(!result.candidates
+      showError(!result.candidates && state.onlyNew && changesAvailable()
+        ? `Nothing added since the ${releaseDate(previousRelease)} data here. Try a wider area.`
+        : !result.candidates
         ? "No locations match. Try a wider area or include unverified locations."
         : state.ownFilter === "only_near"
           ? `None are within ${state.ownRadiusMi} mi of your locations. Widen the distance, or switch to "Skip near mine".`
@@ -909,6 +947,7 @@ function syncUrl() {
   for (const a of state.areas) p.append(a.kind, a.key);
   if (state.radiusMi !== 1) p.set("r", String(state.radiusMi));
   if (state.unverified) p.set("unverified", "1");
+  if (state.onlyNew) p.set("new", "1");
   const qs = p.toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
 }
@@ -927,6 +966,7 @@ async function restoreFromUrl() {
   state.ownFilter = p.get("own") && p.get("mode") !== "near" ? "skip_near" : "only_near";
   state.ownRadiusMi = clamp(parseFloat(p.get("d") ?? p.get("skip")), 0.5, 25, DEFAULT_OWN_RADIUS[state.ownFilter]);
   state.unverified = p.get("unverified") === "1";
+  state.onlyNew = p.get("new") === "1";
   try {
     if (p.get("cat")) {
       const c = await lookup("category", p.get("cat"));
@@ -947,6 +987,7 @@ async function restoreFromUrl() {
   $("radius").value = state.radiusMi;
   $("own-radius").value = state.ownRadiusMi;
   $("unverified").checked = state.unverified;
+  $("only-new").checked = state.onlyNew;
   document.querySelector(`input[name="own-filter"][value="${state.ownFilter}"]`).checked = true;
   updateOutputs();
 }
@@ -961,6 +1002,7 @@ function updateOutputs() {
   $("own-radius-field").hidden = !hasOwn();
   $("own-mode").hidden = !hasOwn();
   renderTargets();
+  $("only-new-field").hidden = !changesAvailable();
   renderSelected("own-selected", state.own, () => { state.own = null; update(); });
   renderAreas();
   renderUploaded();
@@ -1013,16 +1055,25 @@ function init() {
   $("radius").addEventListener("input", (e) => { state.radiusMi = Number(e.target.value); updateOutputs(); slow(); });
   $("own-radius").addEventListener("input", (e) => { state.ownRadiusMi = Number(e.target.value); updateOutputs(); slow(); });
   $("unverified").addEventListener("change", (e) => { state.unverified = e.target.checked; update(); });
+  $("only-new").addEventListener("change", (e) => { state.onlyNew = e.target.checked; update({ fit: true }); });
   document.querySelectorAll(".export button[data-format]").forEach((b) =>
     b.addEventListener("click", () => exportCsv(b.dataset.format, b)));
 
   renderThemeToggle();
   $("theme-toggle").addEventListener("click", toggleTheme);
 
-  getJson("/api/meta").then((m) => { $("release").textContent = m.release; }).catch(() => {});
+  // Loaded before the first refresh (see the bottom of this file), so the
+  // change view is known when results first render.
+  metaReady = getJson("/api/meta").then((m) => {
+    $("release").textContent = m.release;
+    previousRelease = m.previous_release;
+    $("previous-date").textContent = releaseDate(previousRelease);
+  }).catch(() => {});
 }
 
+let metaReady = Promise.resolve();
 init();
+await metaReady;
 await setupLayers();
 await restoreFromUrl();
 await update({ fit: true });

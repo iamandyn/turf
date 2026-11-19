@@ -67,6 +67,8 @@ class Excluded(BaseModel):
     name: str
     address: str | None
     state: str | None
+    lat: float
+    lon: float
     nearest_own_location: str
     distance_mi: float
 
@@ -158,6 +160,8 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
                     name=values["name"],
                     address=values["address"],
                     state=values["state"],
+                    lat=values["lat"],
+                    lon=values["lon"],
                     nearest_own_location=own_location,
                     distance_mi=round(distance_mi, 2),
                 )

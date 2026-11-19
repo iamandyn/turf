@@ -41,12 +41,14 @@ A user picks a competitor chain (e.g. Orangetheory Fitness), optionally a state 
 |---|---|---|
 | **Data pipeline** (`scripts/`, `src/turf_app/{normalize,chains,states,serving}.py`) | Extract US places and state boundaries from a pinned Overture release; normalize names, match places to chains, flag duplicates, fill missing states; write the serving database | Python 3.12, DuckDB (+ spatial, httpfs) |
 | **API** (`src/turf_app/api.py`, `targets.py`, `ratelimit.py`) | Chain search, chain locations, target lists with exclusions, CSV export; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
-| **Frontend** | *Not built yet.* A map with search, controls, and export | Planned: Vite + TypeScript + MapLibre |
+| **Frontend** (`src/turf_app/web/`) | One page: chain search, state/radius/unverified controls, skip-near-yours, map of targets, sticky results and export bar, shareable URLs | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap; served by FastAPI |
 | **Container** (`Dockerfile`, `deploy/docker-compose.yml`) | Immutable image per commit; data mounted read-only | Docker, Compose |
 | **Edge** (`deploy/Caddyfile.snippet`) | TLS, reverse proxy, real client IP from Cloudflare | Cloudflare proxy, Caddy |
 | **CI/CD** (`.github/workflows/ci.yml`, `scripts/server_deploy.sh`) | Lint, type-check, test; build and push image; deploy with health check and automatic rollback; public smoke test | GitHub Actions, GHCR, SSH forced command |
 
 ## 4. Key data flows
+
+**Page load:** FastAPI serves `index.html`, `app.js`, `styles.css`, and the vendored MapLibre from the package, with a strict CSP; map tiles come straight from OpenFreeMap.
 
 **Request path:** browser → Cloudflare → Caddy (sets `X-Client-IP` from `CF-Connecting-IP`) → container on `127.0.0.1:8090` → rate limiter → FastAPI route → DuckDB cursor on the read-only `turf.duckdb` → JSON or CSV.
 
@@ -67,6 +69,7 @@ A user picks a competitor chain (e.g. Orangetheory Fitness), optionally a state 
 | **No merging of overlapping circles** | Both ad platforms accept overlapping targets; merged circles get larger and less precise | Longer export lists |
 | **Radius limited to 1–50 mi** | Meta Ads Manager's US range, so exports work on both platforms | Google allows more |
 | **Docker + GHCR + SSH forced command** | Immutable, rollback-able releases; the CI key can't do anything except deploy a SHA | Server setup is a separate, manual step (`setup_server.sh`) |
+| **No-build frontend served by the API** | One image, one deploy, nothing extra to host; no Node toolchain for a backend-focused project | No TypeScript or bundling; fine at this size (one ~500-line module) |
 | **In-memory, per-worker rate limiting** | No extra infrastructure; enough to stop one visitor hogging the server | Limits are per worker (up to 2× with 2 workers); Redis would make them exact |
 | **Client IP from a Caddy-set header, not `X-Forwarded-For`** | Cloudflare passes a visitor-supplied `X-Forwarded-For` through, so trusting it lets anyone pick a new IP per request | Depends on the Caddy config being in place before this app version |
 

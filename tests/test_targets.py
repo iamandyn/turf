@@ -40,6 +40,7 @@ def test_excludes_targets_near_own_locations(client: TestClient) -> None:
     assert excluded[0]["id"] == "sb1"
     assert excluded[0]["nearest_own_location"] == "dk1 Main St"
     assert 0.3 < excluded[0]["distance_mi"] < 0.4
+    assert (excluded[0]["lat"], excluded[0]["lon"]) == (30.27, -97.74)  # for drawing on the map
 
 
 def test_unverified_own_locations_still_exclude(client: TestClient) -> None:

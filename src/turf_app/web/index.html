@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Turf · Geo-conquesting target lists</title>
+  <meta name="description" content="Pick a competitor, get an ad-ready list of target areas around their locations, built from open Overture Maps data.">
+  <link rel="stylesheet" href="/vendor/maplibre-gl-4.7.1/maplibre-gl.css">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e4572e' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23e4572e'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div class="app">
+    <aside class="panel" aria-label="Target list builder">
+      <header class="brand">
+        <h1><span class="logo" aria-hidden="true"></span>Turf</h1>
+        <p class="tagline">Target ads around a competitor's locations.</p>
+      </header>
+
+      <section class="step" aria-labelledby="step1-title">
+        <h2 id="step1-title"><span class="num">1</span> Competitor</h2>
+        <div class="combo" data-role="target-search">
+          <label for="target-input" class="sr-only">Competitor chain</label>
+          <input id="target-input" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Search a chain, e.g. Orangetheory"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="target-results">
+          <ul id="target-results" class="combo-list" role="listbox" hidden></ul>
+        </div>
+        <div class="selected" id="target-selected" hidden></div>
+        <div class="examples" id="examples">
+          <span>Try:</span>
+          <button type="button" data-chain="orangetheory fitness">Orangetheory Fitness</button>
+          <button type="button" data-chain="planet fitness">Planet Fitness</button>
+          <button type="button" data-chain="chick fil a">Chick-fil-A</button>
+        </div>
+      </section>
+
+      <section class="step" aria-labelledby="step2-title">
+        <h2 id="step2-title"><span class="num">2</span> Where and how wide</h2>
+        <label class="field">
+          <span>State</span>
+          <select id="state-select"><option value="">All states</option></select>
+        </label>
+        <label class="field">
+          <span>Ad radius around each location <output id="radius-out" for="radius">1 mi</output></span>
+          <input id="radius" type="range" min="1" max="50" step="0.5" value="1">
+          <small>Meta allows 1–50 mi in the US, so exports work on both platforms.</small>
+        </label>
+        <label class="check">
+          <input id="unverified" type="checkbox">
+          <span>Include unverified locations
+            <small>No recent activity signal in Overture; some may be closed.</small>
+          </span>
+        </label>
+      </section>
+
+      <section class="step" aria-labelledby="step3-title">
+        <h2 id="step3-title"><span class="num">3</span> Skip near yours <em>optional</em></h2>
+        <p class="hint">Don't pay to reach your own customers: drop targets close to your locations.</p>
+        <div class="combo" data-role="own-search">
+          <label for="own-input" class="sr-only">Your chain</label>
+          <input id="own-input" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Your chain, e.g. Planet Fitness"
+                 role="combobox" aria-expanded="false" aria-autocomplete="list"
+                 aria-controls="own-results">
+          <ul id="own-results" class="combo-list" role="listbox" hidden></ul>
+        </div>
+        <div class="selected" id="own-selected" hidden></div>
+        <label class="field" id="own-radius-field" hidden>
+          <span>Skip targets within <output id="own-radius-out" for="own-radius">1 mi</output> of yours</span>
+          <input id="own-radius" type="range" min="0.5" max="10" step="0.5" value="1">
+        </label>
+      </section>
+
+      <section class="list" id="list-section" hidden aria-labelledby="list-title">
+        <h2 id="list-title">Locations</h2>
+        <ol id="target-list"></ol>
+        <p class="more" id="list-more" hidden></p>
+      </section>
+
+      <footer class="foot">
+        <p>Data: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a>, release <span id="release">…</span>.
+          Basemap © <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>.</p>
+        <p><a href="https://github.com/iamandyn/turf" target="_blank" rel="noopener">Source</a> · <a href="/docs" target="_blank" rel="noopener">API</a></p>
+      </footer>
+      <section class="actionbar" aria-live="polite" aria-label="Results and export">
+        <p class="empty" id="empty-state">Pick a competitor to see their locations.</p>
+        <div id="summary" hidden>
+          <p class="big"><strong id="n-targets">0</strong> targets</p>
+          <p class="sub" id="summary-detail"></p>
+        </div>
+        <p class="error" id="error" role="alert" hidden></p>
+        <div class="export" id="export" hidden>
+          <div class="buttons">
+            <button type="button" class="primary" data-format="google_ads_editor">Google Ads Editor CSV</button>
+            <button type="button" data-format="generic">CSV for Meta &amp; others</button>
+          </div>
+          <details>
+            <summary>Campaign name &amp; upload help</summary>
+            <label class="field">
+              <span>Campaign name (Google Ads Editor)</span>
+              <input id="campaign" type="text" maxlength="200">
+            </label>
+            <p><strong>Google Ads Editor:</strong> Keywords and targeting → Locations → Make multiple changes → paste the CSV, with "My data includes columns for campaigns".</p>
+            <p><strong>Meta Ads Manager:</strong> Meta has no documented bulk radius upload; the generic CSV has addresses and coordinates to add as locations, each with the radius shown.</p>
+          </details>
+        </div>
+      </section>
+    </aside>
+
+    <main class="map-wrap">
+      <div id="map" role="region" aria-label="Map of target locations"></div>
+      <div class="legend" aria-hidden="true">
+        <span><i class="dot target"></i>Target</span>
+        <span><i class="dot excluded"></i>Skipped (near yours)</span>
+        <span><i class="dot own"></i>Yours</span>
+      </div>
+      <div class="loading" id="loading" hidden>Loading…</div>
+    </main>
+  </div>
+  <script src="/vendor/maplibre-gl-4.7.1/maplibre-gl.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

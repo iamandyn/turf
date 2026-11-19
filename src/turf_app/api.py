@@ -17,6 +17,7 @@ import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
@@ -29,6 +30,26 @@ from turf_app.targets import (
     UnknownChainError,
     build_targets,
     to_csv,
+)
+
+WEB_DIR = Path(__file__).parent / "web"
+
+# The page only loads its own scripts; the basemap's tiles, fonts, and sprites
+# come from OpenFreeMap. MapLibre runs its worker from a blob: URL and sets
+# inline styles on map elements.
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: https://tiles.openfreemap.org",
+        "connect-src 'self' https://tiles.openfreemap.org",
+        "worker-src blob:",
+        "child-src blob:",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+    ]
 )
 
 # Similarity needed for a fuzzy (typo) match, e.g. "starbuks" -> "starbucks".
@@ -127,7 +148,16 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
                 status_code=429,
                 headers={"Retry-After": str(retry_after)},
             )
-        return await call_next(request)
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        path = request.url.path
+        if not (path.startswith("/api/") or path.startswith("/docs") or path == "/openapi.json"):
+            # Frontend files: their names carry no content hash, so always
+            # revalidate (cheap: StaticFiles answers with ETags).
+            response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+            response.headers.setdefault("Cache-Control", "no-cache")
+        return response
 
     @app.get("/healthz")
     def healthz(db: Db) -> dict[str, str]:
@@ -250,6 +280,8 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             },
         )
 
+    # Last, so API routes win; html=True serves index.html at "/".
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app
 
 

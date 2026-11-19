@@ -135,3 +135,28 @@ def test_x_forwarded_for_is_ignored(serving_db: Path, monkeypatch: pytest.Monkey
         assert c.get("/api/meta", headers=headers).status_code == 200
         spoofed = {**headers, "X-Forwarded-For": "1.2.3.4"}
         assert c.get("/api/meta", headers=spoofed).status_code == 429
+
+
+def test_frontend_served_with_security_headers(client: TestClient) -> None:
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "<title>Turf" in resp.text
+    csp = resp.headers["content-security-policy"]
+    assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+def test_frontend_assets_and_vendored_maplibre(client: TestClient) -> None:
+    for path in ("/app.js", "/styles.css", "/vendor/maplibre-gl-4.7.1/maplibre-gl.js"):
+        assert client.get(path).status_code == 200, path
+
+
+def test_api_responses_have_no_csp(client: TestClient) -> None:
+    resp = client.get("/api/meta")
+    assert "content-security-policy" not in resp.headers
+    assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+def test_unknown_api_path_is_404_not_frontend(client: TestClient) -> None:
+    assert client.get("/api/nope").status_code == 404

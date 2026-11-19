@@ -192,7 +192,29 @@ The filename comes from `chain_key`, which only contains `[a-z0-9 ]`, so it's sa
 
 **Not done:** merging overlapping circles (see HLD §5).
 
-### 3.4 Rate limiting (`ratelimit.py`)
+### 3.4 Frontend and static serving
+
+`create_app()` mounts `StaticFiles(src/turf_app/web, html=True)` at `/` **after** all API routes, so `/api/*` always wins and `/` serves `index.html`. The files ship inside the Python package (hatch includes them in the wheel), so the image needs no separate frontend step.
+
+**Response headers** (same middleware as rate limiting):
+- Every response gets `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
+- Frontend responses also get `Cache-Control: no-cache` (the filenames have no content hash; `StaticFiles` answers revalidation with ETags) and a CSP. `/api/*`, `/docs` and `/openapi.json` don't get either.
+- **CSP:** `default-src 'self'`; `script-src 'self'`; `style-src 'self' 'unsafe-inline'` (MapLibre sets inline styles); `img-src`/`connect-src` add `https://tiles.openfreemap.org`; `worker-src blob:` (MapLibre's worker); `frame-ancestors 'none'`.
+
+**`web/app.js`** (one ES module, no framework):
+
+| Part | What it does |
+|---|---|
+| `state` | target chain, own chain, US state, radius, skip radius, include-unverified; mirrored to the URL (`?chain=&own=&state=&r=&skip=&unverified=1`) by `syncUrl`, restored by `restoreFromUrl` |
+| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over `/api/chains/search`; 200 ms debounce; out-of-order responses dropped |
+| `refresh` | `POST /api/targets`, plus `GET /api/chains/{own}/locations?include_unverified=true` when a skip chain is set; a request counter drops stale responses |
+| map | GeoJSON sources `targets`, `excluded`, `own`. Radius circles are drawn at true scale with a zoom-interpolated `circle-radius` (meters ÷ Web Mercator meters-per-pixel × cos(lat)), so there's no polygon generation even for 17k targets |
+| export | `POST /api/targets/export`, then downloads the blob with the server's filename |
+| errors | 429s show the `Retry-After` wait; network and API errors show in the action bar |
+
+The sidebar list shows the first 300 targets; the map and exports have all of them. The phone layout (≤ 800 px) puts the map on top and the panel below.
+
+### 3.5 Rate limiting (`ratelimit.py`)
 
 An in-memory sliding window per `(client IP, rule)`, per worker. **The first matching rule wins:**
 
@@ -250,7 +272,7 @@ Created and updated by `scripts/setup_server.sh`, which is re-runnable. CI is de
 |---|---|---|
 | `check` | every push and PR | `uv sync --frozen`, ruff check, ruff format --check, mypy (strict), pytest, `bash -n scripts/*.sh` |
 | `image` | push to `main` | buildx, then push `ghcr.io/iamandyn/turf:<sha>` and `:main` with `TURF_COMMIT=<sha>` and a GitHub Actions cache |
-| `deploy` | after `image` | SSH as `turfdeploy` with `deploy $GITHUB_SHA` (job token on stdin), then a public smoke test: `/healthz`, `/api/meta` commit equals SHA, search, targets |
+| `deploy` | after `image` | SSH as `turfdeploy` with `deploy $GITHUB_SHA` (job token on stdin), then a public smoke test (`/healthz`, `/api/meta` commit equals SHA, search, targets), then `scripts/browser_smoke.py` against the live site in headless Chromium, with screenshots uploaded as a workflow artifact |
 
 Third-party actions are **pinned to commit SHAs** (release tag in a comment); `.github/dependabot.yml` opens weekly update PRs.
 
@@ -291,4 +313,5 @@ The `production` environment is optional; add required reviewers there to gate d
 - **Pipeline:** `test_chains.py` and `test_states.py` build tiny DuckDB tables shaped like real cases and run the real `build()` / `fill_states()`.
 - **API:** `conftest.py` builds a serving database **with the real `write_serving_db`**, then `test_api.py` and `test_targets.py` use FastAPI's `TestClient`. Rate limiting is disabled in the shared client and tested separately with small rules.
 - **Convention:** a test case taken from real data says so in a comment, quoting the actual row ("Real case: …").
+- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error or CSP violation, and walks the flow: search, state, radius, skip chain, both exports (row counts must match the on-screen count), URL restore, phone layout. It runs locally against any base URL, and in CI after every deploy.
 - **Not covered by automated tests:** the S3 extract scripts (they need network and run for minutes), the shell deploy scripts beyond syntax and the command check, and actually importing an export into Google Ads Editor.

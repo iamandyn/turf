@@ -13,7 +13,12 @@ turf/
 │   ├── serving.py           Build the read-only turf.duckdb the API serves
 │   ├── targets.py           Target-list logic, request/response models, CSV export
 │   ├── ratelimit.py         Per-IP sliding-window rate limiter
-│   └── api.py               FastAPI app: routes, DB cursor dependency, middleware
+│   ├── api.py               FastAPI app: routes, DB cursor dependency, middleware, static files
+│   └── web/                 Frontend, served at / (no build step)
+│       ├── index.html       Page structure (steps 1–3, sticky action bar, map)
+│       ├── app.js           All behavior: search, state/URL, map layers, export
+│       ├── styles.css       Layout and theme (CSS variables at the top)
+│       └── vendor/maplibre-gl-4.7.1/  Pinned MapLibre build + license
 ├── scripts/                 Everything you run by hand (thin wrappers around src/)
 │   ├── inspect_places.py        Step 0: look at the schema and a sample area
 │   ├── extract_us.py            Step 1: US places from S3 → us_places.parquet
@@ -25,7 +30,9 @@ turf/
 │   ├── deploy_data.sh           Upload a release's turf.duckdb and switch to it
 │   ├── setup_server.sh          Create the deploy user and /opt/turf (admin, re-runnable)
 │   ├── server_deploy.sh         Runs on the server: the CI key's only command
-│   └── update_caddy_cloudflare_ips.sh  Refresh Caddy's trusted Cloudflare ranges
+│   ├── update_caddy_cloudflare_ips.sh  Refresh Caddy's trusted Cloudflare ranges
+│   ├── browser_smoke.py         End-to-end browser test (Playwright) against any URL
+│   └── watch_ci.sh              Wait for a commit's CI/CD run and print the job results
 ├── tests/                   pytest; conftest.py builds a small serving DB with the real builder
 ├── deploy/
 │   ├── docker-compose.yml   Production container definition (installed to /opt/turf)
@@ -34,8 +41,7 @@ turf/
 ├── .github/dependabot.yml   Weekly PRs to update the pinned actions
 ├── Dockerfile               API image (data is mounted, not baked in)
 ├── documents/               HLD, LLD, this guide
-├── data/                    Pipeline output, per release (gitignored)
-└── web/                     Frontend (not built yet)
+└── data/                    Pipeline output, per release (gitignored)
 ```
 
 **Convention:** logic lives in `src/turf_app/`; scripts in `scripts/` only parse arguments, call that logic, and print or write results. Shared code (e.g. `normalize_text`, used by both the pipeline and search) must stay in `src/`.
@@ -56,6 +62,10 @@ turf/
 | **Target lists and exclusions** | `build_targets` in `targets.py` | `TargetRequest` limits | `tests/test_targets.py` |
 | **CSV export formats** | `to_csv`, `ExportFormat` in `targets.py` | `export_targets` route in `api.py` | `test_targets.py::test_*export*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
+| **Frontend: search box** | `setupCombo` in `web/app.js` | `/api/chains/search` | `scripts/browser_smoke.py` |
+| **Frontend: map layers and colors** | `setupLayers`, `metersToPixels` in `web/app.js` | colors in `web/styles.css` (`--accent`, `--own`, `--skip`) | browser smoke (screenshots) |
+| **Frontend: controls, URL sharing** | `state`, `syncUrl`, `restoreFromUrl`, `init` in `web/app.js` | `web/index.html` | browser smoke (URL restore) |
+| **Security headers / CSP** | `CONTENT_SECURITY_POLICY` and middleware in `api.py` | add new third-party origins here *and* test in a browser | `test_api.py::test_frontend_*` |
 | **Real client IP** | `deploy/Caddyfile.snippet` (server) | `scripts/update_caddy_cloudflare_ips.sh`, `ratelimit.py` docstring | `test_api.py::test_x_forwarded_for_is_ignored` |
 | **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore`; dependency groups in `pyproject.toml` (`pipeline` and `dev` stay out of the image) | CI `image` job |
 | **CI/CD** | `.github/workflows/ci.yml` | `scripts/server_deploy.sh` | CI itself |
@@ -82,6 +92,8 @@ turf/
 1. Add a value to `ExportFormat` and a branch in `to_csv`.
 2. Write tests for the header and one row.
 3. Record the platform's documented format, with its source, in LLD §3.3.
+
+**Change the frontend.** Edit `src/turf_app/web/`, run the API locally (`TURF_DB=… uv run uvicorn turf_app.api:app --reload`), then `uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000` and look at the screenshots in `data/screenshots/`. Loading anything from a new origin (fonts, tiles, scripts) needs a CSP change in `api.py`. To upgrade MapLibre, download the new `dist/` files into a new `vendor/maplibre-gl-X.Y.Z/`, check their hashes against a second CDN, and update the two paths in `index.html`.
 
 **Change the serving DB schema.**
 1. Edit `serving.py` and bump `SCHEMA_VERSION`.

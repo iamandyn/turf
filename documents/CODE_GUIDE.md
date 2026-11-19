@@ -69,6 +69,7 @@ turf/
 | **Frontend: map layers, colors, layer toggles, zoom hint** | `setupLayers`, `metersToPixels`, `setLayerVisible`, `updateZoomHint` in `web/app.js` | colors in `web/styles.css` (`--accent`, `--own`, `--skip`) | browser smoke (screenshots, axe) |
 | **Frontend: controls, URL sharing** | `state`, `syncUrl`, `restoreFromUrl`, `init` in `web/app.js` | `web/index.html` | browser smoke (URL restore) |
 | **Dark mode / theme colors** | tokens on `:root` and the two dark blocks in `web/styles.css` (keep them identical) | `web/theme.js` (saved choice), `toggleTheme`, `applyMapTheme`, `themeLayerPaint` in `web/app.js` | browser smoke (dark mode + axe) |
+| **Frontend caching / asset versions** | `VERSIONED_ASSETS`, `render_index` in `api.py` (add any new frontend file there) | cache headers in the middleware | `test_api.py::test_page_references_versioned_assets`, `test_asset_version_changes_with_content` |
 | **Security headers / CSP** | `CONTENT_SECURITY_POLICY` and middleware in `api.py` | add new third-party origins here *and* test in a browser | `test_api.py::test_frontend_*` |
 | **Real client IP** | `deploy/Caddyfile.snippet` (server) | `scripts/update_caddy_cloudflare_ips.sh`, `ratelimit.py` docstring | `test_api.py::test_x_forwarded_for_is_ignored` |
 | **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore`; dependency groups in `pyproject.toml` (`pipeline` and `dev` stay out of the image) | CI `image` job |

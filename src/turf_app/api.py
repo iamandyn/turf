@@ -6,6 +6,7 @@ Run locally:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from collections.abc import AsyncIterator, Iterator
@@ -17,7 +18,7 @@ from typing import Annotated, Literal
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
@@ -37,6 +38,30 @@ from turf_app.targets import (
 )
 
 WEB_DIR = Path(__file__).parent / "web"
+
+# Our own frontend files, referenced from index.html as "/<name>". The page is
+# served with a content hash on each ("/app.js?v=3f9c..."): Cloudflare gives
+# .js/.css a 4-hour browser cache whatever the origin says, so without it a
+# deploy could pair the new page with yesterday's script. Vendored MapLibre
+# already has its version in the path.
+VERSIONED_ASSETS = ("theme.js", "styles.css", "app.js")
+IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+def _asset_version(name: str) -> str:
+    return hashlib.sha256((WEB_DIR / name).read_bytes()).hexdigest()[:12]
+
+
+def render_index() -> str:
+    """index.html with versioned asset URLs; re-read each time, so edits show up in dev."""
+    html = (WEB_DIR / "index.html").read_text()
+    for name in VERSIONED_ASSETS:
+        ref = f'"/{name}"'
+        if ref not in html:
+            raise RuntimeError(f"index.html no longer references {ref}")
+        html = html.replace(ref, f'"/{name}?v={_asset_version(name)}"')
+    return html
+
 
 # The page only loads its own scripts; the basemap's tiles, fonts, and sprites
 # come from OpenFreeMap. MapLibre runs its worker from a blob: URL and sets
@@ -201,10 +226,13 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         path = request.url.path
         if not (path.startswith("/api/") or path.startswith("/docs") or path == "/openapi.json"):
-            # Frontend files: their names carry no content hash, so always
-            # revalidate (cheap: StaticFiles answers with ETags).
             response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
-            response.headers.setdefault("Cache-Control", "no-cache")
+            if path.lstrip("/") in VERSIONED_ASSETS and request.query_params.get("v"):
+                # A versioned URL's content never changes; a new version is a new URL.
+                response.headers["Cache-Control"] = IMMUTABLE
+            else:
+                # The page and unversioned files: always revalidate (cheap, ETags).
+                response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     @app.get("/healthz")
@@ -429,8 +457,13 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             },
         )
 
-    # Last, so API routes win; html=True serves index.html at "/".
-    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+    @app.get("/", include_in_schema=False)
+    @app.get("/index.html", include_in_schema=False)
+    def index() -> HTMLResponse:
+        return HTMLResponse(render_index())
+
+    # Last, so API routes and the page win.
+    app.mount("/", StaticFiles(directory=WEB_DIR), name="web")
     return app
 
 

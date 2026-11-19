@@ -219,11 +219,11 @@ The filename comes from `TargetRequest.target_key` (e.g. `turf-orangetheory-fitn
 
 ### 3.4 Frontend and static serving
 
-`create_app()` mounts `StaticFiles(src/turf_app/web, html=True)` at `/` **after** all API routes, so `/api/*` always wins and `/` serves `index.html`. The files ship inside the Python package (hatch includes them in the wheel), so the image needs no separate frontend step.
+`create_app()` mounts `StaticFiles(src/turf_app/web)` at `/` **after** all API routes, so `/api/*` always wins. `/` and `/index.html` are a route (`render_index`) that rewrites `"/theme.js"`, `"/styles.css"` and `"/app.js"` to `?v=<first 12 hex of the file's SHA-256>`. **Why:** Cloudflare gives `.js`/`.css` a 4-hour browser cache (`max-age=14400`) regardless of the origin's `no-cache`, so a deploy could pair the new page with the old script; that is how dark mode first shipped broken for a returning browser. Versioned URLs are served `Cache-Control: public, max-age=31536000, immutable`; the page and unversioned paths stay `no-cache`. New frontend files must be added to `VERSIONED_ASSETS`. The files ship inside the Python package (hatch includes them in the wheel), so the image needs no separate frontend step.
 
 **Response headers** (same middleware as rate limiting):
 - Every response gets `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
-- Frontend responses also get `Cache-Control: no-cache` (the filenames have no content hash; `StaticFiles` answers revalidation with ETags) and a CSP. `/api/*`, `/docs` and `/openapi.json` don't get either.
+- Frontend responses also get a CSP, and `Cache-Control: no-cache` except versioned assets (`immutable`, see above). `/api/*`, `/docs` and `/openapi.json` don't get either.
 - **CSP:** `default-src 'self'`; `script-src 'self' https://static.cloudflareinsights.com` (Cloudflare Web Analytics is on for the zone and injects its beacon; `connect-src` also allows `https://cloudflareinsights.com`). Found by the browser test, since the injection only happens behind Cloudflare; `style-src 'self' 'unsafe-inline'` (MapLibre sets inline styles); `img-src`/`connect-src` add `https://tiles.openfreemap.org`; `worker-src blob:` (MapLibre's worker); `frame-ancestors 'none'`.
 
 **`web/app.js`** (one ES module, no framework):

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from turf_app import api
 from turf_app.api import create_app
 from turf_app.ratelimit import RateLimiter, Rule
 
@@ -146,6 +148,33 @@ def test_frontend_served_with_security_headers(client: TestClient) -> None:
     assert "frame-ancestors 'none'" in csp
     assert resp.headers["cache-control"] == "no-cache"
     assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+def test_page_references_versioned_assets(client: TestClient) -> None:
+    html = client.get("/").text
+    for name in ("theme.js", "styles.css", "app.js"):
+        match = re.search(rf'"/{re.escape(name)}\?v=([0-9a-f]{{12}})"', html)
+        assert match, name
+        resp = client.get(f"/{name}?v={match.group(1)}")
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert client.get("/index.html").text == html
+
+
+def test_asset_version_changes_with_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("index.html", "theme.js", "styles.css", "app.js"):
+        (tmp_path / name).write_bytes((api.WEB_DIR / name).read_bytes())
+    monkeypatch.setattr(api, "WEB_DIR", tmp_path)
+    before = api.render_index()
+    (tmp_path / "app.js").write_text("// changed")
+    after = api.render_index()
+    assert before != after and "styles.css?v=" in after
+
+
+def test_unversioned_assets_revalidate(client: TestClient) -> None:
+    assert client.get("/app.js").headers["cache-control"] == "no-cache"
 
 
 def test_frontend_assets_and_vendored_maplibre(client: TestClient) -> None:

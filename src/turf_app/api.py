@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
-from turf_app import briefs, mcp_server
+from turf_app import briefs, mcp_server, samples
 from turf_app.markets import (
     PRESETS,
     MarketRequest,
@@ -37,6 +37,12 @@ from turf_app.markets import (
     zip_rows,
 )
 from turf_app.normalize import normalize_text
+from turf_app.performance import (
+    NoUsableMetrosError,
+    PerformanceRequest,
+    PerformanceResponse,
+    analyze,
+)
 from turf_app.ratelimit import RateLimiter
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -196,6 +202,7 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
                 raise RuntimeError(f"preset {preset.key}: unknown categories {sorted(missing)}")
         app.state.db = con
         app.state.briefs = briefs.load()
+        app.state.samples = {}
         mcp_server.start(mcp)
         try:
             async with mcp.session_manager.run():
@@ -325,39 +332,84 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
     def markets(db: Db, req: MarketRequest) -> MarketResponse:
         return _markets(db, req)
 
-    @app.post("/api/markets/export")
-    def export_markets(
-        db: Db, req: MarketRequest, format: Literal["metros", "zips"] = "metros"
+    def _csv_response(
+        db: duckdb.DuckDBPyConnection,
+        result: MarketResponse,
+        format: str,
+        slug: str,
+        status: dict[str, str] | None = None,
     ) -> Response:
         """``metros``: the ranked list with reasons. ``zips``: every ZIP code in
         the ranked metros, one per row, for pasting into Meta or Google Ads."""
-        result = _markets(db, req)
         buf = io.StringIO()
         writer = csv.writer(buf, lineterminator="\n")
         if format == "metros":
-            writer.writerow(
-                ["rank", "metro", "cbsa_code", "kind", "population", "growth_2020_25_pct",
-                 "match", "zip_count", "top_signals"]
-            )  # fmt: skip
+            header = ["rank", "metro", "cbsa_code", "kind", "population", "growth_2020_25_pct",
+                      "match", "zip_count", "top_signals"]  # fmt: skip
+            writer.writerow([*header, "brand_status"] if status else header)
             for r in result.results:
                 top = "; ".join(f"{x.label} {x.ratio:g}x typical" for x in r.reasons[:3])
-                writer.writerow(
-                    [r.rank, r.name, r.metro_code, r.kind, r.population, r.growth_pct,
-                     "" if r.match is None else r.match, r.zip_count, top]
-                )  # fmt: skip
+                row = [r.rank, r.name, r.metro_code, r.kind, r.population, r.growth_pct,
+                       "" if r.match is None else r.match, r.zip_count, top]  # fmt: skip
+                writer.writerow([*row, status.get(r.metro_code, "")] if status else row)
         else:
             names = {r.metro_code: (r.rank, r.name) for r in result.results}
             writer.writerow(["zip", "country", "metro", "metro_rank"])
             for code, zip_code, _ in zip_rows(db, list(names)):
                 writer.writerow([zip_code, "US", names[code][1], names[code][0]])
-        key = req.preset or "custom"
-        mode = "lookalikes" if req.seeds else "top"
-        slug = re.sub(r"[^a-z0-9]+", "-", f"{key}-{mode}").strip("-")
+        slug = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
         return Response(
             content=buf.getvalue(),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="turf-{slug}-{format}.csv"'},
         )
+
+    @app.post("/api/markets/export")
+    def export_markets(
+        db: Db, req: MarketRequest, format: Literal["metros", "zips"] = "metros"
+    ) -> Response:
+        result = _markets(db, req)
+        mode = "lookalikes" if req.seeds else "top"
+        return _csv_response(db, result, format, f"{req.preset or 'custom'}-{mode}")
+
+    def _performance(db: duckdb.DuckDBPyConnection, req: PerformanceRequest) -> PerformanceResponse:
+        try:
+            return analyze(db, req)
+        except UnknownCategoriesError as e:
+            raise HTTPException(status_code=404, detail=f"Unknown category: {e}") from e
+        except (NoUsableMetrosError, UniverseTooSmallError) as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+    @app.post("/api/performance")
+    def performance(db: Db, req: PerformanceRequest) -> PerformanceResponse:
+        """Recommendations from a brand's own results by geography (see performance.py).
+        The rows are used for this request only and never stored."""
+        return _performance(db, req)
+
+    @app.post("/api/performance/export")
+    def export_performance(
+        db: Db, req: PerformanceRequest, format: Literal["metros", "zips"] = "metros"
+    ) -> Response:
+        result = _performance(db, req)
+        status = {s.metro_code: s.status.replace("_", " ") for s in result.status}
+        return _csv_response(
+            db, result.recommendations, format, f"{req.preset or 'custom'}-recommended", status
+        )
+
+    @app.get("/api/samples")
+    def list_samples() -> list[samples.SampleInfo]:
+        """Fictional sample brands with synthetic results (see samples.py)."""
+        return [samples.info(s) for s in samples.SAMPLES.values()]
+
+    @app.get("/api/samples/{key}")
+    def get_sample(db: Db, request: Request, key: str) -> samples.SampleData:
+        sample = samples.SAMPLES.get(key)
+        if sample is None:
+            raise HTTPException(status_code=404, detail=f"Unknown sample: {key}")
+        cache: dict[str, samples.SampleData] = request.app.state.samples
+        if key not in cache:  # deterministic, so generated once per process
+            cache[key] = samples.generate(db, sample)
+        return cache[key]
 
     @app.get("/api/briefs/{preset}/{metro_code}")
     def get_brief(request: Request, preset: str, metro_code: str) -> briefs.Brief:

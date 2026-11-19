@@ -28,6 +28,7 @@ from starlette.types import Receive, Scope, Send
 from turf_app import briefs
 from turf_app.markets import PRESETS, MarketRequest, MarketResult, rank_markets, zip_rows
 from turf_app.normalize import normalize_text
+from turf_app.performance import PerformanceRequest, ResultRow, analyze
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True)
 
@@ -42,6 +43,9 @@ custom ones), search_metros to turn the brand's best markets into metro codes,
 then rank_markets with those codes as seeds to get lookalike metros, each with
 the signals that make it similar. metro_zip_codes gives ZIPs for Meta or Google
 Ads targeting; get_brief returns a pre-written creative brief when there is one.
+With the brand's actual results by geography (an ad-platform export), use
+recommend_from_results instead: it picks the best markets itself, checks whether
+the signals predict this brand's results, and recommends where it isn't spending.
 Signals are shares of local businesses (a proxy for the audience), not measured
 demand; say so when presenting results."""
 
@@ -76,6 +80,16 @@ class RankedMetro(BaseModel):
     match: int | None
     why: list[str]  # top signals, e.g. "dog walker: 3.2x the typical share"
     zip_count: int
+
+
+class ResultsAdvice(BaseModel):
+    matched_rows: int
+    rows: int
+    unmatched_examples: list[str]
+    best_markets: list[str]
+    signal_check: str  # verdict in a sentence, with the numbers
+    signals_that_matter: list[str]
+    recommendations: list[RankedMetro]
 
 
 class Ranking(BaseModel):
@@ -195,6 +209,42 @@ def build_mcp(
             compared=result.universe,
             seeds=[s.name for s in result.seeds],
             metros=[_ranked(r) for r in result.results],
+        )
+
+    @server.tool(annotations=READ_ONLY)
+    def recommend_from_results(
+        rows: list[ResultRow],
+        kpi: str = "roas",
+        geo_type: str = "metro",
+        preset: str | None = None,
+        signals: list[str] | None = None,
+        limit: int = 10,
+    ) -> ResultsAdvice:
+        """Recommend new metros from a brand's results by geography. Each row:
+        geo (ZIP with geo_type "zip", or a market like "Austin, TX"), spend, and
+        conversions (kpi "cpa") or revenue (kpi "roas"). Nothing is stored."""
+        req = PerformanceRequest.model_validate(
+            {"rows": rows, "kpi": kpi, "geo_type": geo_type, "preset": preset,
+             "categories": signals, "limit": limit}
+        )  # fmt: skip
+        db = cursor()
+        try:
+            result = analyze(db, req)
+        finally:
+            db.close()
+        names = {m.metro_code: m.name for m in result.metros}
+        return ResultsAdvice(
+            matched_rows=result.matched_rows,
+            rows=result.rows,
+            unmatched_examples=result.unmatched_examples,
+            best_markets=[names[m.metro_code] for m in result.metros if m.best],
+            signal_check=result.check.summary,
+            signals_that_matter=[
+                f"{f.label} (rank correlation {f.rho:+.2f})"
+                for f in result.check.signals
+                if f.weight
+            ],
+            recommendations=[_ranked(r) for r in result.recommendations.results],
         )
 
     @server.tool(annotations=READ_ONLY)

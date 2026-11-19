@@ -29,6 +29,7 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass
+from typing import Any
 
 import duckdb
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -209,7 +210,67 @@ def _zscores(values: dict[str, float]) -> dict[str, float]:
     return {k: (v - mean) / sd for k, v in values.items()}
 
 
-def rank_markets(db: duckdb.DuckDBPyConnection, req: MarketRequest) -> MarketResponse:
+@dataclass
+class Profiles:
+    """Every compared metro's signal values: raw (for display) and standardized."""
+
+    metros: dict[str, tuple[Any, ...]]  # metro_code -> row (see _METRO_SQL)
+    signals: list[str]
+    raw: dict[str, dict[str, float]]  # signal -> metro -> share of places (%) or growth (%)
+    z: dict[str, dict[str, float]]  # signal -> metro -> z-score across the compared metros
+    typical: dict[str, float]  # signal -> median raw value
+
+    def strength(self, code: str, weights: dict[str, float] | None = None) -> float:
+        w = weights or {}
+        total = sum(w.get(s, 1.0) for s in self.signals) or 1.0
+        return sum(w.get(s, 1.0) * self.z[s][code] for s in self.signals) / total
+
+    def reasons(self, code: str) -> list[Reason]:
+        out = []
+        for signal in self.signals:
+            value, med = self.raw[signal][code], self.typical[signal]
+            if signal == GROWTH_SIGNAL:
+                ratio = (100 + value) / (100 + med)  # growth: compare as multipliers
+            else:
+                ratio = value / med if med else 0.0
+            out.append(
+                Reason(
+                    signal=signal,
+                    label=signal_label(signal),
+                    ratio=round(ratio, 2),
+                    value=round(value, 3),
+                    typical=round(med, 3),
+                )
+            )
+        return sorted(out, key=lambda r: self.z[r.signal][code], reverse=True)
+
+    def result(self, code: str, rank: int, score: float, match: int | None) -> MarketResult:
+        r = self.metros[code]
+        return MarketResult(
+            rank=rank,
+            metro_code=code,
+            name=r[1],
+            kind=r[2],
+            population=r[3],
+            growth_pct=float(r[4]),
+            score=round(score, 3),
+            match=match,
+            reasons=self.reasons(code),
+            center=(r[6], r[7]),
+            bounds=(r[8], r[9], r[10], r[11]),
+            zip_count=r[12],
+        )
+
+
+def signal_label(signal: str) -> str:
+    return "population growth 2020-25" if signal == GROWTH_SIGNAL else label_for(signal)
+
+
+def build_profiles(
+    db: duckdb.DuckDBPyConnection, req: MarketRequest, extra_metros: list[str] | None = None
+) -> Profiles:
+    """Profiles for the metros ``req`` compares, plus its seeds and ``extra_metros``
+    (e.g. every metro a brand already runs in), whatever their size."""
     categories = req.signal_categories
     if categories:
         rows = db.execute(
@@ -221,6 +282,7 @@ def rank_markets(db: duckdb.DuckDBPyConnection, req: MarketRequest) -> MarketRes
             raise UnknownCategoriesError(", ".join(missing))
 
     kinds = ["metro", "micro"] if req.include_micro else ["metro"]
+    always = list(dict.fromkeys([*req.seeds, *(extra_metros or [])]))
     metro_rows = db.execute(
         """
         SELECT m.metro_code, m.name, m.kind, m.population, m.growth_pct, m.n_open,
@@ -228,10 +290,10 @@ def rank_markets(db: duckdb.DuckDBPyConnection, req: MarketRequest) -> MarketRes
                (SELECT count(*) FROM metro_zips z WHERE z.metro_code = m.metro_code)
         FROM metros m
         WHERE (list_contains($kinds, m.kind) AND m.population >= $min_pop)
-           OR list_contains($seeds, m.metro_code)
+           OR list_contains($always, m.metro_code)
         ORDER BY m.metro_code
         """,
-        {"kinds": kinds, "min_pop": req.min_population, "seeds": req.seeds},
+        {"kinds": kinds, "min_pop": req.min_population, "always": always},
     ).fetchall()
     metros = {r[0]: r for r in metro_rows}
     unknown = sorted(set(req.seeds) - set(metros))
@@ -254,7 +316,7 @@ def rank_markets(db: duckdb.DuckDBPyConnection, req: MarketRequest) -> MarketRes
         ).fetchall():
             counts[(code, cat)] = n
 
-    raw: dict[str, dict[str, float]] = {}  # signal -> metro -> display value
+    raw: dict[str, dict[str, float]] = {}
     for cat in categories:
         raw[cat] = {code: 100.0 * counts.get((code, cat), 0) / r[5] for code, r in metros.items()}
     if req.use_growth:
@@ -271,72 +333,51 @@ def rank_markets(db: duckdb.DuckDBPyConnection, req: MarketRequest) -> MarketRes
         )
         z[signal] = _zscores(scaled)
     typical = {signal: statistics.median(values.values()) for signal, values in raw.items()}
-    signals = list(raw)
+    return Profiles(metros=metros, signals=list(raw), raw=raw, z=z, typical=typical)
 
-    def reasons(code: str) -> list[Reason]:
-        out = []
-        for signal in signals:
-            value, med = raw[signal][code], typical[signal]
-            if signal == GROWTH_SIGNAL:
-                ratio = (100 + value) / (100 + med)  # growth: compare as multipliers
-            else:
-                ratio = value / med if med else 0.0
-            out.append(
-                Reason(
-                    signal=signal,
-                    label="population growth 2020-25"
-                    if signal == GROWTH_SIGNAL
-                    else label_for(signal),
-                    ratio=round(ratio, 2),
-                    value=round(value, 3),
-                    typical=round(med, 3),
-                )
-            )
-        return sorted(out, key=lambda r: z[r.signal][code], reverse=True)
 
-    def result(code: str, rank: int, score: float, match: int | None) -> MarketResult:
-        r = metros[code]
-        return MarketResult(
-            rank=rank,
-            metro_code=code,
-            name=r[1],
-            kind=r[2],
-            population=r[3],
-            growth_pct=float(r[4]),
-            score=round(score, 3),
-            match=match,
-            reasons=reasons(code),
-            center=(r[6], r[7]),
-            bounds=(r[8], r[9], r[10], r[11]),
-            zip_count=r[12],
-        )
-
-    def strength(code: str) -> float:
-        return statistics.fmean(z[s][code] for s in signals)
-
-    candidates = [c for c in metros if c not in req.seeds]
+def rank_markets(
+    db: duckdb.DuckDBPyConnection,
+    req: MarketRequest,
+    weights: dict[str, float] | None = None,
+    exclude: set[str] | None = None,
+    profiles: Profiles | None = None,
+) -> MarketResponse:
+    """Rank metros for ``req``. ``weights`` (signal -> weight, default 1) scale
+    each signal's part in distance and strength; ``exclude`` drops metros from
+    the results (e.g. where the brand already spends)."""
+    prof = profiles or build_profiles(db, req)
+    signals = prof.signals
+    w = {s: (weights or {}).get(s, 1.0) for s in signals}
+    total_w = sum(w.values()) or 1.0
+    candidates = [c for c in prof.metros if c not in req.seeds and c not in (exclude or set())]
     if req.seeds:
-        centroid = {s: statistics.fmean(z[s][c] for c in req.seeds) for s in signals}
+        centroid = {s: statistics.fmean(prof.z[s][c] for c in req.seeds) for s in signals}
 
         def distance(code: str) -> float:
-            return math.sqrt(statistics.fmean((z[s][code] - centroid[s]) ** 2 for s in signals))
+            return math.sqrt(
+                sum(w[s] * (prof.z[s][code] - centroid[s]) ** 2 for s in signals) / total_w
+            )
 
         ordered = sorted(candidates, key=lambda c: (distance(c), c))
         results = [
-            result(c, i + 1, distance(c), round(100 * math.exp(-distance(c))))
+            prof.result(c, i + 1, distance(c), round(100 * math.exp(-distance(c))))
             for i, c in enumerate(ordered[: req.limit])
         ]
         mode = "lookalike"
     else:
-        ordered = sorted(candidates, key=lambda c: (-strength(c), c))
-        results = [result(c, i + 1, strength(c), None) for i, c in enumerate(ordered[: req.limit])]
+        ordered = sorted(candidates, key=lambda c: (-prof.strength(c, w), c))
+        results = [
+            prof.result(c, i + 1, prof.strength(c, w), None)
+            for i, c in enumerate(ordered[: req.limit])
+        ]
         mode = "signal_strength"
 
     return MarketResponse(
         mode=mode,
         signals=signals,
-        universe=len(metros),
-        seeds=[result(c, 0, strength(c), None) for c in req.seeds],
+        universe=len(prof.metros),
+        seeds=[prof.result(c, 0, prof.strength(c, w), None) for c in req.seeds],
         results=results,
     )
 

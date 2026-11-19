@@ -40,7 +40,7 @@ def test_initialize_and_list_tools(client: TestClient) -> None:
     tools = {t["name"]: t for t in rpc(client, "tools/list", {})["result"]["tools"]}
     assert set(tools) == {
         "list_presets", "search_metros", "search_signals", "rank_markets",
-        "metro_zip_codes", "get_brief",
+        "recommend_from_results", "metro_zip_codes", "get_brief",
     }  # fmt: skip
     assert all(t["annotations"]["readOnlyHint"] for t in tools.values())
 
@@ -77,3 +77,15 @@ def test_unknown_host_rejected(client: TestClient) -> None:
     # DNS-rebinding protection: only configured Host headers are served.
     resp = client.post("/mcp", headers={**HEADERS, "host": "evil.example"}, json={})
     assert resp.status_code == 421
+
+
+def test_recommend_from_results(client: TestClient) -> None:
+    rows = [{"geo": f"Metro {i}, ST", "spend": 1000, "revenue": 1000 + 100 * i} for i in range(11)]
+    rows[3]["geo"] = "Austin, TX"
+    out = call(
+        client, "recommend_from_results", rows=rows, kpi="roas",
+        signals=["pet_groomer", "dog_park"], limit=3,
+    )  # fmt: skip
+    assert out["matched_rows"] == 11 and out["best_markets"][0] == "Metro 10, ST"
+    assert "better than chance" in out["signal_check"]
+    assert out["signals_that_matter"][0].startswith("pet groomer")

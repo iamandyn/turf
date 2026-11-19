@@ -4,13 +4,17 @@
 
 ## 1. Purpose
 
-Turf turns open Overture Maps data into **ad-ready location target lists for geo-conquesting**: showing ads to people near a competitor's locations.
+Turf helps a consumer brand decide **which US metro areas to spend on next**. The brand gives two inputs:
+- **Signals:** a few kinds of local business whose density hints at its audience (pet groomers, dog parks and vets for a pet-care app), or one of six presets.
+- **Seed metros (optional):** its best markets today, from its ad account.
 
-A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or a whole category (e.g. pet boarding: every such business, chains and independents), optionally a state or metro area and their own locations (their chain in Overture, an uploaded store list, or both), and gets the competitors' US locations as radius targets: by default only those near the user's own locations, where customers could switch, or alternatively all except those near them. Each target is a lat/lng plus a radius, and the list exports as a Google Ads Editor CSV or a generic CSV for Meta and other tools.
+Turf ranks every US metro area by how closely its profile matches the seeds, or by signal strength when there are no seeds. Each result explains itself ("dog walkers: 3.2× the typical metro's share of businesses"). Results export as ZIP lists for Meta and Google Ads, and each preset's top metros come with a pre-written creative brief. The same search is available to AI agents as MCP tools.
 
-**Users:** agency media buyers (many clients, each with its own competitive set) and local marketers running location-based campaigns. An in-house marketer sets it up once; for them the ongoing value is the monthly change view (competitor locations added to or removed from the data since last month, to keep a running campaign's list current).
+**Users:** media buyers at an agency like Valid, an AI-native agency whose clients are national consumer brands (subscription apps, DTC, health & fitness, home services) buying on Meta, TikTok and Google. Those brands buy by geography but have no stores, so the question isn't "where are our competitors" but "where else looks like the markets that work for us".
 
-**Why Overture:** it's free, covers the whole US, and has the one thing this needs: where businesses are, what category they are, and which brand they belong to. It has no demographics or foot traffic, so Turf only makes claims that location and brand data can support.
+**History:** v1 (git tag `v1-conquesting`) was a geo-conquesting tool, building target lists around competitors' store locations. It was rebuilt after checking who Valid's clients actually are: almost none have physical locations. The data pipeline and the engineering carried over; the product didn't.
+
+**Why Overture + Census:** Overture says where every business is and what kind it is, for the whole US, for free. That's enough to describe what each metro is like. The Census adds what Overture lacks: metro boundaries, population and growth. Neither measures demand, so Turf presents signals as a proxy, and the way to validate them is the brand's own results by metro.
 
 ## 2. System overview
 
@@ -25,66 +29,68 @@ A user picks one or more competitor chains (e.g. Orangetheory Fitness + F45) or 
 │ extract_metros.py ► us_metros.parquet (Census metros)    │   │          │                    │
 │        │                                                 │   │          ▼                    │
 │        ▼                                                 │   │ Docker: turf container        │
-│ build_chains.py ─► places.parquet + chains.parquet       │   │   FastAPI (uvicorn, 2 workers)│
-│   chain matching, duplicate flags, state fill            │   │   rate limiter (per IP)       │
-│        │                                                 │   │   DuckDB read-only ───────┐   │
-│        ▼                                                 │   │                           │   │
-│ build_serving_db.py ─► turf.duckdb (1.3 GB) ─────────────┼───┼──► /opt/turf/data/current ┘   │
-│                         (scripts/deploy_data.sh)         │   │                               │
+│ build_chains.py ─► places.parquet (duplicate flags)      │   │   FastAPI (uvicorn, 2 workers)│
+│   chain matching, duplicate flags, state fill            │   │   /api/* · /mcp · page        │
+│        │                                                 │   │   rate limiter (per IP)       │
+│        ▼                                                 │   │   DuckDB read-only ───────┐   │
+│ build_serving_db.py ─► turf.duckdb (5.5 MB) ─────────────┼───┼──► /opt/turf/data/current ┘   │
+│   per-metro aggregates   (scripts/deploy_data.sh)        │   │                               │
 └──────────────────────────────────────────────────────────┘   └───────────────────────────────┘
 
-   CODE PATH:  git push main ─► GitHub Actions: check ─► build image ─► push GHCR ─► deploy ─► smoke test
+   CODE PATH:  git push main ─► GitHub Actions: check ─► build image ─► push GHCR ─► deploy ─► smoke + browser test
 ```
 
 ## 3. Components
 
 | Component | Responsibility | Tech |
 |---|---|---|
-| **Data pipeline** (`scripts/`, `src/turf_app/{normalize,chains,states,serving}.py`) | Extract US places and state boundaries from a pinned Overture release; normalize names, match places to chains, flag duplicates, fill missing states; write the serving database | Python 3.12, DuckDB (+ spatial, httpfs) |
-| **API** (`src/turf_app/api.py`, `targets.py`, `ratelimit.py`) | Search (chains, categories, metro areas), chain locations, target lists filtered by area and by distance to your locations, CSV export; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
-| **Frontend** (`src/turf_app/web/`) | One page: competitor search (several chains or a category), one "Where" field for states and metro areas (combinable), radius/unverified controls, your locations (chain and/or CSV upload, only-near or skip-near), map with layer toggles, target and skipped lists, sticky results and export bar, shareable URLs, light/dark theme | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap; served by FastAPI |
+| **Data pipeline** (`scripts/`, `src/turf_app/{normalize,chains,states,serving}.py`) | Extract US places from a pinned Overture release and metro boundaries and population from the Census; normalize, flag duplicates, fill missing states; aggregate open places per metro and category; write the serving database | Python 3.12, DuckDB (+ spatial, httpfs) |
+| **Market engine** (`src/turf_app/markets.py`) | Presets, signal shares, z-scores, lookalike distance, signal strength, reasons | Pure Python over DuckDB queries |
+| **API** (`src/turf_app/api.py`, `ratelimit.py`, `briefs.py`) | Presets, category and metro search, market ranking, metro/ZIP CSV export, briefs; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
+| **MCP server** (`src/turf_app/mcp_server.py`) | The same search as six read-only tools for AI agents, at `/mcp` in the same app | MCP Python SDK 2.x (streamable HTTP, stateless) |
+| **Frontend** (`src/turf_app/web/`) | One page: audience presets and editable signals, seed metros, filters, ranked list, map, detail panel with signal bars and brief, exports, shareable URLs, light/dark theme | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap |
 | **Container** (`Dockerfile`, `deploy/docker-compose.yml`) | Immutable image per commit; data mounted read-only | Docker, Compose |
 | **Edge** (`deploy/Caddyfile.snippet`) | TLS, reverse proxy, real client IP from Cloudflare | Cloudflare proxy, Caddy |
-| **CI/CD** (`.github/workflows/ci.yml`, `scripts/server_deploy.sh`) | Lint, type-check, test; build and push image; deploy with health check and automatic rollback; public smoke test | GitHub Actions, GHCR, SSH forced command |
+| **CI/CD** (`.github/workflows/ci.yml`, `scripts/server_deploy.sh`) | Lint, type-check, test; build and push image; deploy with health check and automatic rollback; public smoke test and browser test | GitHub Actions, GHCR, SSH forced command |
 
 ## 4. Key data flows
 
-**Page load:** FastAPI serves `index.html`, `app.js`, `styles.css`, and the vendored MapLibre from the package, with a strict CSP; map tiles come straight from OpenFreeMap.
+**Page load:** FastAPI serves `index.html` with content-hashed asset URLs, the scripts, styles and vendored MapLibre, with a strict CSP; map tiles come straight from OpenFreeMap.
 
-**Request path:** browser → Cloudflare → Caddy (sets `X-Client-IP` from `CF-Connecting-IP`) → container on `127.0.0.1:8090` → rate limiter → FastAPI route → DuckDB cursor on the read-only `turf.duckdb` → JSON or CSV.
+**Ranking:** browser or agent → Cloudflare → Caddy (sets `X-Client-IP`) → container → rate limiter → `POST /api/markets` (or the `rank_markets` MCP tool) → `rank_markets()` reads the metros and the signal categories' counts from DuckDB, standardizes, ranks, and returns reasons → JSON.
 
-**Code release:** a push to `main` runs the checks. If they pass, CI builds `ghcr.io/iamandyn/turf:<sha>`, then SSHes to the server as `turfdeploy`, whose key can only run `deploy <sha>`. The server pulls the image, switches the container, and waits for `/api/meta` to report that SHA, rolling back to the previous image if it doesn't. CI then smoke-tests the public URL.
+**Code release:** a push to `main` runs the checks. If they pass, CI builds `ghcr.io/iamandyn/turf:<sha>`, then SSHes to the server as `turfdeploy`, whose key can only run `deploy <sha>`. The server pulls the image, switches the container, and waits for `/api/meta` to report that SHA, rolling back if it doesn't. CI then smoke-tests the public URL and drives it in a browser.
 
-**Data release:** run the pipeline locally for a new Overture release, then `scripts/deploy_data.sh <release>`. That uploads to `/opt/turf/data/<release>/`, points `current` at it, and recreates the container. Rolling back data means pointing `current` at an older release.
+**Data release:** run the pipeline locally for a new Overture release, then `scripts/deploy_data.sh <release>`, which uploads to `/opt/turf/data/<release>/`, points `current` at it, and recreates the container.
 
 ## 5. Key decisions and trade-offs
 
 | Decision | Why | Cost |
 |---|---|---|
-| **Geo-conquesting, not a "demand score"** | Overture can't support a demand score (no demographics or traffic); brand and location are what it's good at | A narrower product |
-| **Precompute offline, serve a read-only DuckDB file** | Fast, predictable queries; no database server to run; data can be swapped with a single rename | A data refresh means a rebuild (~5 minutes) and a 1.3 GB upload |
-| **Pinned Overture release** | Results are reproducible; the release is shown in `/api/meta` | Doesn't update itself; someone has to run the pipeline monthly |
-| **Chain matching on brand *or* name, with brand tags trusted per chain** | The brand field is missing on many real chain locations and wrong on some (see LLD §2.3) | Heuristic; tuned on real cases and covered by tests |
-| **Confirmed-open locations by default** | Places with no status have no recent Overture activity signal; they explain most over-counting | Some real but unverified locations are hidden; a toggle shows them |
-| **Duplicates flagged, not merged** | Rules stay conservative: merging two real downtown stores is worse than one leftover duplicate | ~1–2% duplicates remain for some chains |
-| **No merging of overlapping circles** | Both ad platforms accept overlapping targets; merged circles get larger and less precise | Longer export lists |
-| **Radius limited to 1–50 mi** | Meta Ads Manager's US range, so exports work on both platforms | Google allows more |
-| **Docker + GHCR + SSH forced command** | Immutable, rollback-able releases; the CI key can't do anything except deploy a SHA | Server setup is a separate, manual step (`setup_server.sh`) |
-| **No-build frontend served by the API** | One image, one deploy, nothing extra to host; no Node toolchain for a backend-focused project | No TypeScript or bundling; fine at this size (one ~500-line module) |
-| **In-memory, per-worker rate limiting** | No extra infrastructure; enough to stop one visitor hogging the server | Limits are per worker (up to 2× with 2 workers); Redis would make them exact |
-| **Client IP from a Caddy-set header, not `X-Forwarded-For`** | Cloudflare passes a visitor-supplied `X-Forwarded-For` through, so trusting it lets anyone pick a new IP per request | Depends on the Caddy config being in place before this app version |
+| **Market selection, not geo-conquesting** (the pivot) | Valid's clients are national consumer brands without stores; they buy by geography, so "which metros next" is their question | v1's conquesting features are gone (kept in the `v1-conquesting` tag) |
+| **Signals are shares of local businesses, not per-capita rates** | Overture's coverage varies 3× between metros (2,100 to 6,200 open places per 100k people), so per-capita rates would partly measure mapping quality | Shares are diluted in metros with many of some other kind of business |
+| **Lookalikes to the brand's own best markets** | The brand's results are the only ground truth available; matching them is more defensible than a universal "opportunity score" | Needs seeds for the best results; without them it's only signal strength |
+| **Every result explains itself** | A media buyer has to defend a plan to a client; "2.1× the typical share of pet groomers" is checkable | More data per result |
+| **Census for metros and population** | Overture has neither; CBSAs are the standard public metro definition | A second data source, pinned by SHA-256 |
+| **Export ZIPs, not metro names** | Neither Meta nor Google targets Census metros; both take US ZIP lists | ZIPs that straddle metros go to the metro holding most of their places |
+| **Pre-written briefs, no live LLM calls** | It's a take-home demo: the live site must cost nothing to run however much it's used | Briefs exist only for each preset's top metros (65); see README |
+| **MCP server in the same app** | Valid already gives clients an MCP server for their account; agents are how an AI-native agency would use this | A runtime dependency (MCP SDK) |
+| **Precompute offline, serve aggregates** | The served file is 5.5 MB; queries take milliseconds; no database server | A data refresh means rerunning the pipeline (~5 minutes) |
+| **Pinned Overture release** | Reproducible results; the release is shown in `/api/meta` | Someone has to run the pipeline monthly |
+| **Docker + GHCR + SSH forced command** | Immutable, rollback-able releases; the CI key can only deploy a SHA | Server setup is a separate, manual step |
+| **No-build frontend served by the API** | One image, one deploy; no Node toolchain for a backend-focused project | No TypeScript or bundling |
+| **In-memory, per-worker rate limiting** | No extra infrastructure | Limits are per worker (up to 2× with 2 workers) |
 
 ## 6. Non-goals (for now)
 
 - Countries other than the US.
-- Live ad-platform integration through their APIs; Turf produces files for upload.
-- Demographic or foot-traffic scoring.
-- User accounts or saved lists.
+- Measured demand (demographics, income, foot traffic, search volume).
+- Pushing targets into ad accounts through the platforms' APIs; Turf produces files and tool results.
+- User accounts or saved plans.
 
 ## 7. Known limitations
 
-- **Unverified Meta format:** Meta doesn't publish a bulk radius-target file format that we could verify, so the "generic" CSV is deliberately plain.
-- **US territories:** Puerto Rico and other territories aren't covered (LLD §2.1).
-- **Categories:** search covers Overture's 2,060 fine-grained categories, but not synonyms. "dog daycare" has no category of its own (it's under pet boarding), so search falls back to entries matching any word.
-- **List size:** one list is capped at 25,000 targets; broad categories need a state.
-- **Brand data:** a few odd "chains" appear (e.g. a single city's fire department).
+- **Signals are a proxy.** Business mix suggests where an audience lives but doesn't measure it. Validate against the brand's results by metro before moving budget.
+- **Coverage and category quirks.** Overture's categories are crowdsourced; some metros have oddities (a category at 100× typical), and small categories are noisy in small metros. The population floor (250k by default) keeps comparisons sensible.
+- **Unverified upload formats.** The ZIP list is a plain CSV for the platforms' bulk location boxes; neither platform publishes a file format for this that I could verify.
+- **US territories:** Puerto Rico and other territories aren't covered.

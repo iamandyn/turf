@@ -10,21 +10,27 @@ turf/
 │   ├── normalize.py         Text, chain-key, state, and street-key normalization
 │   ├── chains.py            Chain matching + duplicate flagging (DuckDB SQL + Python functions)
 │   ├── states.py            Fill missing states from state boundaries
-│   ├── serving.py           Build the read-only turf.duckdb the API serves
-│   ├── targets.py           Target-list logic, request/response models, CSV export
+│   ├── serving.py           Build the read-only turf.duckdb the API serves (per-metro aggregates)
+│   ├── markets.py           Presets, signals, lookalike ranking, reasons, request/response models
+│   ├── briefs.py            Brief model and loader; briefs.json holds the 65 pre-written briefs
+│   ├── mcp_server.py        MCP tools for AI agents, mounted at /mcp
 │   ├── ratelimit.py         Per-IP sliding-window rate limiter
-│   ├── api.py               FastAPI app: routes, DB cursor dependency, middleware, static files
+│   ├── api.py               FastAPI app: routes, exports, DB cursor dependency, middleware, page
 │   └── web/                 Frontend, served at / (no build step)
-│       ├── index.html       Page structure (steps 1–3, sticky action bar, map)
-│       ├── app.js           All behavior: search, state/URL, map layers, export
-│       ├── styles.css       Layout and theme (CSS variables at the top)
+│       ├── index.html       Page structure (steps 1–3, results, sticky action bar, map, detail panel)
+│       ├── app.js           All behavior: presets, signals, seeds, state/URL, map, details, export, theme
+│       ├── theme.js         Applies a saved light/dark choice before first paint
+│       ├── styles.css       Layout and theme (CSS tokens at the top, dark palette below)
 │       └── vendor/maplibre-gl-4.7.1/  Pinned MapLibre build + license
 ├── scripts/                 Everything you run by hand (thin wrappers around src/)
 │   ├── inspect_places.py        Step 0: look at the schema and a sample area
 │   ├── extract_us.py            Step 1: US places from S3 → us_places.parquet
 │   ├── extract_states.py        Step 1b: state boundaries → us_states.parquet
+│   ├── extract_metros.py        Step 1c: Census metro boundaries + population → us_metros.parquet
 │   ├── build_chains.py          Step 2: chains, duplicates, states → places/chains.parquet
 │   ├── build_serving_db.py      Step 3: → turf.duckdb
+│   ├── brief_inputs.py          Dump the numbers each brief is grounded in
+│   ├── assemble_briefs.py       The briefs' prose + generated "based on" lines → briefs.json
 │   ├── check_extract.py         Checks: state formats, status mix, chain counts
 │   ├── investigate_chain.py     Break down one chain (status, sources, near pairs)
 │   ├── deploy_data.sh           Upload a release's turf.duckdb and switch to it
@@ -33,11 +39,11 @@ turf/
 │   ├── update_caddy_cloudflare_ips.sh  Refresh Caddy's trusted Cloudflare ranges
 │   ├── browser_smoke.py         End-to-end browser test (Playwright) against any URL
 │   └── watch_ci.sh              Wait for a commit's CI/CD run and print the job results
-├── tests/                   pytest; conftest.py builds a small serving DB with the real builder
+├── tests/                   pytest; conftest.py builds a 12-metro serving DB with the real builder
 ├── deploy/
 │   ├── docker-compose.yml   Production container definition (installed to /opt/turf)
 │   └── Caddyfile.snippet    Turf's parts of the server Caddyfile
-├── .github/workflows/ci.yml CI/CD: check → image → deploy → smoke test (actions pinned to SHAs)
+├── .github/workflows/ci.yml CI/CD: check → image → deploy → smoke + browser test (actions pinned to SHAs)
 ├── .github/dependabot.yml   Weekly PRs to update the pinned actions
 ├── Dockerfile               API image (data is mounted, not baked in)
 ├── documents/               HLD, LLD, this guide
@@ -51,36 +57,35 @@ turf/
 | Feature | Start here | Also touches | Tests |
 |---|---|---|---|
 | **Overture extract** (which places, which columns) | `scripts/extract_us.py` | `scripts/inspect_places.py` to explore the schema first | none (needs S3); check `extract_manifest.json` |
-| **Name / brand normalization** | `src/turf_app/normalize.py` | search behavior in `api.py` (same function) | `tests/test_normalize.py` |
-| **Chain aliases** (e.g. merge "Exxon" into "ExxonMobil") | `CHAIN_ALIASES` in `normalize.py` | | `test_normalize.py::test_chain_key` |
-| **Which brands count as chains** (trust thresholds, kiosk exclusions) | `ChainRules`, `EXCLUDED_CHAINS` in `chains.py` | | `tests/test_chains.py` |
-| **Duplicate detection** | `chains.py` step 5, `street_key` in `normalize.py` | `ChainRules.dup_*` | `test_chains.py`, `test_normalize.py::test_street_key_*` |
-| **Added / removed since last release** (change view) | `src/turf_app/changes.py` (matching rules, `MAX_CHURN`), `scripts/build_changes.py` | `is_new` / `gone_locations` in `serving.py`; `only_new`, `Gone` in `targets.py`; `_previous_release` in `api.py`; `changesAvailable`, `releaseDate` in `web/app.js` | `tests/test_changes.py`, `test_targets.py::test_*new*`, `test_gone_*`; `changes_client` fixture |
-| **Metro areas** (Census CBSAs: boundaries, tagging, search, filter) | `scripts/extract_metros.py` (pinned URL + SHA-256), metro tagging in `serving.py` | `metros` filter in `targets.py`; `search_metros`, `get_metro` in `api.py`; the Where field (`searchAreas`, `addArea`, `renderAreas`) in `web/app.js` | `test_targets.py::test_metro_*`, `test_api.py::test_metro*`; fixture boxes in `conftest.py` |
+| **Census metros and population** | `scripts/extract_metros.py` (pinned URLs + SHA-256) | metro tagging in `serving.py` | `tests/conftest.py` fixture metros |
+| **Name / brand normalization** | `src/turf_app/normalize.py` | search in `api.py` and `mcp_server.py` (same function) | `tests/test_normalize.py` |
+| **Duplicate detection** (needs chain matching) | `chains.py` step 5, `street_key` in `normalize.py` | `ChainRules` | `test_chains.py`, `test_normalize.py::test_street_key_*` |
 | **State cleanup / fill** | `normalize_state` (`normalize.py`), `states.py` | `scripts/extract_states.py` | `test_states.py`, `test_normalize.py` |
-| **Serving DB schema** | `serving.py` | every SQL query in `api.py` and `targets.py`; bump `SCHEMA_VERSION` | `tests/conftest.py` builds it |
-| **Search** (chains + categories, ranking, typos, any-word fallback) | `search` in `api.py` (`_SEARCH_CANDIDATES`); `search_chains` for chains only | `FUZZY_MIN_SIMILARITY` | `test_api.py::test_search_*`, `test_unified_search_*` |
-| **Categories** | `categories` table in `serving.py` | `category` filter in `targets.py`; category label in `web/app.js` | `test_targets.py::test_category_*` |
-| **Chain locations** | `chain_locations` in `api.py` | | `test_api.py::test_locations_*` |
-| **Target lists, your locations, only-near / skip-near** | `build_targets`, `_own_locations_sql` in `targets.py` | `TargetRequest` limits (`MAX_TARGETS`, `MAX_CHAINS`, `MAX_UPLOADED_LOCATIONS`), `DEFAULT_OWN_RADIUS_MI`; keep the JS copies of these constants in `web/app.js` in step; timing with `scripts/bench_targets.py` | `tests/test_targets.py` |
-| **CSV export formats** | `to_csv`, `ExportFormat` in `targets.py` | `export_targets` route in `api.py` | `test_targets.py::test_*export*` |
+| **Serving DB schema** | `serving.py` | every SQL query in `markets.py`, `api.py`, `mcp_server.py`; bump `SCHEMA_VERSION` | `tests/conftest.py` builds it |
+| **Presets** (client types and their signals) | `PRESETS` in `markets.py` | checked against the data at startup (`api.py` lifespan); briefs per preset | `test_markets.py::test_preset*` |
+| **Ranking** (shares, z-scores, lookalikes, reasons) | `rank_markets` in `markets.py` | `MarketRequest` limits | `test_markets.py` |
+| **Exports** (metro list, ZIPs) | `export_markets` in `api.py`, `zip_rows` in `markets.py` | `metro_zips` in `serving.py` (`MIN_PLACES_PER_ZIP`) | `test_markets.py::test_export_*`, `test_zip_assignment` |
+| **Briefs** | `scripts/assemble_briefs.py` (prose), `briefs.py` | `scripts/brief_inputs.py`; `renderBrief` in `web/app.js` | `test_markets.py::test_*brief*` |
+| **MCP tools** | `mcp_server.py` | `TURF_MCP_ALLOWED_HOSTS` in the `Dockerfile`; `/mcp` rule in `ratelimit.py` | `tests/test_mcp.py` |
+| **Search** (categories, metros) | `_tiered_search` in `api.py` | `FUZZY_MIN_SIMILARITY` | `test_markets.py::test_*search*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
-| **Frontend: search box, several competitors** | `setupCombo`, `addTarget`, `renderTargets` in `web/app.js` | `/api/search` | `scripts/browser_smoke.py` |
-| **Frontend: store list upload** | `parseStoreList`, `parseCsv`, `onUpload` in `web/app.js` | step 3 in `web/index.html` | browser smoke (upload) |
-| **Frontend: map layers, colors, layer toggles, zoom hint** | `setupLayers`, `metersToPixels`, `setLayerVisible`, `updateZoomHint` in `web/app.js` | colors in `web/styles.css` (`--accent`, `--own`, `--skip`) | browser smoke (screenshots, axe) |
-| **Frontend: controls, URL sharing** | `state`, `syncUrl`, `restoreFromUrl`, `init` in `web/app.js` | `web/index.html` | browser smoke (URL restore) |
-| **Dark mode / theme colors** | tokens on `:root` and the two dark blocks in `web/styles.css` (keep them identical) | `web/theme.js` (saved choice), `toggleTheme`, `applyMapTheme`, `themeLayerPaint` in `web/app.js` | browser smoke (dark mode + axe) |
-| **Frontend caching / asset versions** | `VERSIONED_ASSETS`, `render_index` in `api.py` (add any new frontend file there) | cache headers in the middleware | `test_api.py::test_page_references_versioned_assets`, `test_asset_version_changes_with_content` |
+| **Frontend: presets, signals, seeds** | `renderPresets`, `renderSignals`, `renderSeeds`, `setupCombo` in `web/app.js` | `web/index.html` steps 1–2 | `scripts/browser_smoke.py` |
+| **Frontend: results, map, detail panel** | `renderResults`, `setupLayers`, `selectMetro`, `renderBars` in `web/app.js` | colors in `web/styles.css` | browser smoke (screenshots, axe) |
+| **Frontend: URL sharing** | `syncUrl`, `restoreFromUrl` in `web/app.js` | | browser smoke (URL restore) |
+| **Dark mode / theme colors** | tokens on `:root` and the two dark blocks in `web/styles.css` (keep them identical) | `web/theme.js`, `toggleTheme`, `applyMapTheme`, `themeLayerPaint` in `web/app.js` | browser smoke (dark mode + axe) |
+| **Frontend caching / asset versions** | `VERSIONED_ASSETS`, `render_index` in `api.py` (add any new frontend file there) | cache headers in the middleware | `test_api.py::test_page_references_versioned_assets` |
 | **Security headers / CSP** | `CONTENT_SECURITY_POLICY` and middleware in `api.py` | add new third-party origins here *and* test in a browser | `test_api.py::test_frontend_*` |
 | **Real client IP** | `deploy/Caddyfile.snippet` (server) | `scripts/update_caddy_cloudflare_ips.sh`, `ratelimit.py` docstring | `test_api.py::test_x_forwarded_for_is_ignored` |
-| **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore`; dependency groups in `pyproject.toml` (`pipeline` and `dev` stay out of the image) | CI `image` job |
+| **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore`; dependency groups in `pyproject.toml` | CI `image` job |
 | **CI/CD** | `.github/workflows/ci.yml` | `scripts/server_deploy.sh` | CI itself |
 | **Server setup** | `scripts/setup_server.sh` | `deploy/docker-compose.yml`, `scripts/server_deploy.sh` | manual |
 | **Data release / rollback** | `scripts/deploy_data.sh` | | manual |
 
 ## How to make common changes
 
-**Add a chain alias.** Add `"variant": "canonical"` (both already normalized) to `CHAIN_ALIASES`, add a test case, then re-run `build_chains.py` and `build_serving_db.py` and deploy the data.
+**Add or change a preset.** Edit `PRESETS` in `markets.py` with Overture category keys (find them with `GET /api/categories/search`). The app refuses to start if a key isn't in the data. Then regenerate the briefs: `brief_inputs.py`, write prose for any new (preset, metro) pairs in `assemble_briefs.py`, run it.
+
+**Add a chain alias** (affects duplicate detection). Add `"variant": "canonical"` (both already normalized) to `CHAIN_ALIASES`, add a test case, then re-run `build_chains.py` and `build_serving_db.py` and deploy the data.
 
 **Tune chain matching or duplicates.**
 1. Change `ChainRules` or the SQL in `chains.py`.
@@ -95,16 +100,18 @@ turf/
 4. Document it in LLD §3.2.
 
 **Add an export format.**
-1. Add a value to `ExportFormat` and a branch in `to_csv`.
+1. Add a value to the `format` literal and a branch in `export_markets` (`api.py`).
 2. Write tests for the header and one row.
 3. Record the platform's documented format, with its source, in LLD §3.3.
+
+**Add an MCP tool.** Add a function under `build_mcp` in `mcp_server.py` with `@server.tool(annotations=READ_ONLY)`, a typed return model, and a test in `tests/test_mcp.py` that calls it over HTTP.
 
 **Change the frontend.** Edit `src/turf_app/web/`, run the API locally (`TURF_DB=… uv run uvicorn turf_app.api:app --reload`), then `uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000` and look at the screenshots in `data/screenshots/`. Loading anything from a new origin (fonts, tiles, scripts) needs a CSP change in `api.py`. To upgrade MapLibre, download the new `dist/` files into a new `vendor/maplibre-gl-X.Y.Z/`, check their hashes against a second CDN, and update the two paths in `index.html`.
 
 **Change the serving DB schema.**
 1. Edit `serving.py` and bump `SCHEMA_VERSION`.
 2. Update every query that reads the changed table, and `tests/conftest.py` if new columns are needed.
-3. The data and the code have to be deployed together: deploy the data first if the new code needs the new columns.
+3. Ship data and code together without downtime: upload the new file and `mv` it into place without restarting (the running container keeps the old file open), then push the code (LLD §4.6).
 
 **Add a pipeline step.** Put the logic in `src/turf_app/<step>.py` with a test on small tables, add a thin `scripts/<step>.py` CLI that takes `--release`, and add it to the table in LLD §1.
 

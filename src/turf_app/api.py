@@ -16,10 +16,12 @@ from typing import Annotated
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from starlette.middleware.base import RequestResponseEndpoint
 
 from turf_app.normalize import normalize_text
+from turf_app.ratelimit import RateLimiter
 from turf_app.targets import (
     ExportFormat,
     TargetRequest,
@@ -34,6 +36,7 @@ FUZZY_MIN_SIMILARITY = 0.88
 
 
 class Meta(BaseModel):
+    commit: str
     release: str
     built_at_utc: datetime
     places: int
@@ -81,8 +84,15 @@ def _cursor(request: Request) -> Iterator[duckdb.DuckDBPyConnection]:
 Db = Annotated[duckdb.DuckDBPyConnection, Depends(_cursor)]
 
 
-def create_app(db_path: Path | None = None) -> FastAPI:
+def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = None) -> FastAPI:
     path = db_path or Path(os.environ.get("TURF_DB", "data/turf.duckdb"))
+    # Baked into the image at build time, so CI can check the live site runs
+    # the commit it just deployed.
+    commit = os.environ.get("TURF_COMMIT", "dev")
+    limiter = rate_limiter or RateLimiter()
+    # Set in production to the header the reverse proxy writes the real client
+    # IP into. Unset (local dev, tests), the TCP peer address is used.
+    client_ip_header = os.environ.get("TURF_CLIENT_IP_HEADER")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -105,6 +115,20 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app = FastAPI(title="Turf", lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        client = (client_ip_header and request.headers.get(client_ip_header)) or (
+            request.client.host if request.client else "unknown"
+        )
+        retry_after = limiter.check(client, request.method, request.url.path)
+        if retry_after is not None:
+            return JSONResponse(
+                {"detail": "Too many requests; try again shortly."},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        return await call_next(request)
+
     @app.get("/healthz")
     def healthz(db: Db) -> dict[str, str]:
         db.execute("SELECT 1").fetchone()
@@ -118,7 +142,9 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             FROM meta m
         """).fetchone()
         assert row is not None
-        return Meta(release=row[0], built_at_utc=row[1], places=row[2], chains=row[3])
+        return Meta(
+            commit=commit, release=row[0], built_at_utc=row[1], places=row[2], chains=row[3]
+        )
 
     @app.get("/api/chains/search")
     def search_chains(

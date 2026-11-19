@@ -21,10 +21,17 @@ RUN uv sync --frozen --no-dev
 RUN useradd --system --uid 10001 turf
 USER turf
 
-ENV TURF_DB=/data/turf.duckdb
+ARG TURF_COMMIT=dev
+ENV TURF_DB=/data/turf.duckdb \
+    TURF_COMMIT=$TURF_COMMIT
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
 
-CMD ["/app/.venv/bin/uvicorn", "turf_app.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers"]
+# Client IP for rate limiting comes from X-Client-IP, which Caddy sets (replacing
+# anything a visitor sends) from Cloudflare's CF-Connecting-IP. X-Forwarded-For is
+# not trusted: Cloudflare passes through whatever the visitor puts in it.
+ENV TURF_CLIENT_IP_HEADER=X-Client-IP
+CMD ["/app/.venv/bin/uvicorn", "turf_app.api:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "2", "--no-proxy-headers"]

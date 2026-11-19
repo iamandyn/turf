@@ -1,8 +1,27 @@
-# Block added to the server's /etc/caddy/Caddyfile. DNS is a proxied (orange-cloud)
-# Cloudflare A record, so the origin IP stays hidden; Caddy still gets its own
-# Let's Encrypt certificate; set Cloudflare SSL/TLS to Full (strict) so it verifies it.
-# Apply with: back up, append, `caddy validate`, `systemctl reload caddy`.
+# Turf's parts of the server's /etc/caddy/Caddyfile.
+# Apply with: back up, edit, `caddy validate`, `systemctl reload caddy`.
+#
+# DNS is a proxied (orange-cloud) Cloudflare A record, so the origin IP stays
+# hidden; Caddy still gets its own Let's Encrypt certificate. Set Cloudflare
+# SSL/TLS to Full (strict) so Cloudflare verifies it.
+
+# 1. In the global options block. Requests arriving from Cloudflare's ranges get
+#    their client IP from CF-Connecting-IP (which Cloudflare always overwrites).
+#    This is server-wide, so it also corrects client IPs for the other sites.
+#    scripts/update_caddy_cloudflare_ips.sh fills in and refreshes the ranges from
+#    https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6.
+{
+	servers {
+		trusted_proxies static <cloudflare ranges>
+		client_ip_headers CF-Connecting-IP
+	}
+}
+
+# 2. The site. X-Client-IP is set from that client IP, replacing anything the
+#    visitor sent; the app rate-limits on it (TURF_CLIENT_IP_HEADER).
 turf.dunkasaur.gg {
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:8090
+	reverse_proxy 127.0.0.1:8090 {
+		header_up X-Client-IP {client_ip}
+	}
 }

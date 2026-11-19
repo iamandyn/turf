@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
+
+from turf_app.api import create_app
+from turf_app.ratelimit import RateLimiter, Rule
 
 
 def test_healthz(client: TestClient) -> None:
@@ -79,3 +85,53 @@ def test_locations_url_encoded_chain_key(client: TestClient) -> None:
 
 def test_invalid_state_rejected(client: TestClient) -> None:
     assert client.get("/api/chains/starbucks/locations?state=Texas").status_code == 422
+
+
+def test_meta_reports_commit(client: TestClient) -> None:
+    assert client.get("/api/meta").json()["commit"] == "dev"
+
+
+def test_rate_limit_returns_429_with_retry_after(serving_db: Path) -> None:
+    limiter = RateLimiter(rules=(Rule("/api/", limit=2, window_s=60),))
+    with TestClient(create_app(serving_db, rate_limiter=limiter)) as c:
+        assert [c.get("/api/meta").status_code for _ in range(2)] == [200, 200]
+        resp = c.get("/api/meta")
+        assert resp.status_code == 429
+        assert int(resp.headers["retry-after"]) >= 1
+        # Health checks are never limited.
+        assert c.get("/healthz").status_code == 200
+
+
+def test_rate_limit_uses_forwarded_client_ip(serving_db: Path) -> None:
+    # The TestClient's client host is "testclient"; different hosts get separate budgets.
+    limiter = RateLimiter(rules=(Rule("/api/", limit=1, window_s=60),))
+    app = create_app(serving_db, rate_limiter=limiter)
+    with (
+        TestClient(app, client=("203.0.113.1", 1000)) as a,
+        TestClient(app, client=("203.0.113.2", 1000)) as b,
+    ):
+        assert a.get("/api/meta").status_code == 200
+        assert a.get("/api/meta").status_code == 429
+        assert b.get("/api/meta").status_code == 200
+
+
+def test_rate_limit_keys_on_configured_client_ip_header(
+    serving_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TURF_CLIENT_IP_HEADER", "X-Client-IP")
+    limiter = RateLimiter(rules=(Rule("/api/", limit=1, window_s=60),))
+    with TestClient(create_app(serving_db, rate_limiter=limiter)) as c:
+        assert c.get("/api/meta", headers={"X-Client-IP": "198.51.100.7"}).status_code == 200
+        assert c.get("/api/meta", headers={"X-Client-IP": "198.51.100.7"}).status_code == 429
+        assert c.get("/api/meta", headers={"X-Client-IP": "198.51.100.8"}).status_code == 200
+
+
+def test_x_forwarded_for_is_ignored(serving_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A visitor can't dodge the limit by sending their own X-Forwarded-For.
+    monkeypatch.setenv("TURF_CLIENT_IP_HEADER", "X-Client-IP")
+    limiter = RateLimiter(rules=(Rule("/api/", limit=1, window_s=60),))
+    with TestClient(create_app(serving_db, rate_limiter=limiter)) as c:
+        headers = {"X-Client-IP": "198.51.100.7"}
+        assert c.get("/api/meta", headers=headers).status_code == 200
+        spoofed = {**headers, "X-Forwarded-For": "1.2.3.4"}
+        assert c.get("/api/meta", headers=spoofed).status_code == 429

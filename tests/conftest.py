@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
 from turf_app.api import create_app
+from turf_app.ratelimit import RateLimiter
 from turf_app.serving import write_serving_db
 
 PLACES = [
@@ -43,7 +45,7 @@ CHAINS = [
 
 
 @pytest.fixture(scope="session")
-def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
+def serving_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     d = tmp_path_factory.mktemp("serving")
     con = duckdb.connect()
     con.execute(
@@ -61,5 +63,11 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
     con.execute(f"COPY c TO '{d / 'chains.parquet'}' (FORMAT parquet)")
     db = d / "turf.duckdb"
     write_serving_db(d / "places.parquet", d / "chains.parquet", db, "test-release")
-    with TestClient(create_app(db)) as c:
+    return db
+
+
+@pytest.fixture(scope="session")
+def client(serving_db: Path) -> Iterator[TestClient]:
+    # Rate limiting off here; it has its own tests.
+    with TestClient(create_app(serving_db, rate_limiter=RateLimiter(rules=()))) as c:
         yield c

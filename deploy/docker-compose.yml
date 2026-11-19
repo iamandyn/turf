@@ -1,17 +1,17 @@
-# Runs on the server from ~/turf. The API listens on localhost only;
-# Caddy (already on the host) terminates TLS and proxies to it.
+# Installed to /opt/turf/docker-compose.yml on the server by scripts/setup_server.sh.
+# The image tag (one per commit, built by CI) lives in /opt/turf/state/.env and is
+# switched by scripts/server_deploy.sh. Data is mounted read-only from the release
+# that /opt/turf/data/current points at (scripts/deploy_data.sh).
 services:
   turf:
-    build:
-      context: ..
-    image: turf:latest
+    image: ${TURF_IMAGE:?TURF_IMAGE is set in /opt/turf/state/.env}
     container_name: turf
     restart: unless-stopped
     ports:
+      # Localhost only: Caddy on the host is the only way in.
       - "127.0.0.1:8090:8000"
     volumes:
-      # Points at the current release's data; see deploy/README.md.
-      - ./data/current:/data:ro
+      - /opt/turf/data/current:/data:ro
     # Keep Turf from crowding out the other sites on this box.
     mem_limit: 4g
     cpus: 2

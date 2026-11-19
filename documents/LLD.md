@@ -199,7 +199,7 @@ The filename comes from `chain_key`, which only contains `[a-z0-9 ]`, so it's sa
 **Response headers** (same middleware as rate limiting):
 - Every response gets `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`.
 - Frontend responses also get `Cache-Control: no-cache` (the filenames have no content hash; `StaticFiles` answers revalidation with ETags) and a CSP. `/api/*`, `/docs` and `/openapi.json` don't get either.
-- **CSP:** `default-src 'self'`; `script-src 'self'`; `style-src 'self' 'unsafe-inline'` (MapLibre sets inline styles); `img-src`/`connect-src` add `https://tiles.openfreemap.org`; `worker-src blob:` (MapLibre's worker); `frame-ancestors 'none'`.
+- **CSP:** `default-src 'self'`; `script-src 'self' https://static.cloudflareinsights.com` (Cloudflare Web Analytics is on for the zone and injects its beacon; `connect-src` also allows `https://cloudflareinsights.com`). Found by the browser test, since the injection only happens behind Cloudflare; `style-src 'self' 'unsafe-inline'` (MapLibre sets inline styles); `img-src`/`connect-src` add `https://tiles.openfreemap.org`; `worker-src blob:` (MapLibre's worker); `frame-ancestors 'none'`.
 
 **`web/app.js`** (one ES module, no framework):
 

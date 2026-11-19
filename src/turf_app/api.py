@@ -36,14 +36,16 @@ WEB_DIR = Path(__file__).parent / "web"
 
 # The page only loads its own scripts; the basemap's tiles, fonts, and sprites
 # come from OpenFreeMap. MapLibre runs its worker from a blob: URL and sets
-# inline styles on map elements.
+# inline styles on map elements. Cloudflare Web Analytics is enabled on the
+# zone and injects its beacon into HTML responses, so its script and report
+# endpoint are allowed too (turn off injection in Cloudflare to drop them).
 CONTENT_SECURITY_POLICY = "; ".join(
     [
         "default-src 'self'",
-        "script-src 'self'",
+        "script-src 'self' https://static.cloudflareinsights.com",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https://tiles.openfreemap.org",
-        "connect-src 'self' https://tiles.openfreemap.org",
+        "connect-src 'self' https://tiles.openfreemap.org https://cloudflareinsights.com",
         "worker-src blob:",
         "child-src blob:",
         "frame-ancestors 'none'",

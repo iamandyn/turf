@@ -142,7 +142,8 @@ def test_frontend_served_with_security_headers(client: TestClient) -> None:
     assert resp.status_code == 200
     assert "<title>Turf" in resp.text
     csp = resp.headers["content-security-policy"]
-    assert "script-src 'self'" in csp and "frame-ancestors 'none'" in csp
+    assert "script-src 'self' https://static.cloudflareinsights.com" in csp
+    assert "frame-ancestors 'none'" in csp
     assert resp.headers["cache-control"] == "no-cache"
     assert resp.headers["x-content-type-options"] == "nosniff"
 

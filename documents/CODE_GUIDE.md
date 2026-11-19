@@ -60,11 +60,12 @@ turf/
 | **Search** (chains + categories, ranking, typos, any-word fallback) | `search` in `api.py` (`_SEARCH_CANDIDATES`); `search_chains` for chains only | `FUZZY_MIN_SIMILARITY` | `test_api.py::test_search_*`, `test_unified_search_*` |
 | **Categories** | `categories` table in `serving.py` | `category` filter in `targets.py`; category label in `web/app.js` | `test_targets.py::test_category_*` |
 | **Chain locations** | `chain_locations` in `api.py` | | `test_api.py::test_locations_*` |
-| **Target lists and exclusions** | `build_targets` in `targets.py` | `TargetRequest` limits, `MAX_TARGETS` | `tests/test_targets.py` |
+| **Target lists, your locations, only-near / skip-near** | `build_targets`, `_own_locations_sql` in `targets.py` | `TargetRequest` limits (`MAX_TARGETS`, `MAX_CHAINS`, `MAX_UPLOADED_LOCATIONS`), `DEFAULT_OWN_RADIUS_MI`; keep the JS copies of these constants in `web/app.js` in step; timing with `scripts/bench_targets.py` | `tests/test_targets.py` |
 | **CSV export formats** | `to_csv`, `ExportFormat` in `targets.py` | `export_targets` route in `api.py` | `test_targets.py::test_*export*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
-| **Frontend: search box** | `setupCombo` in `web/app.js` | `/api/chains/search` | `scripts/browser_smoke.py` |
-| **Frontend: map layers and colors** | `setupLayers`, `metersToPixels` in `web/app.js` | colors in `web/styles.css` (`--accent`, `--own`, `--skip`) | browser smoke (screenshots) |
+| **Frontend: search box, several competitors** | `setupCombo`, `addTarget`, `renderTargets` in `web/app.js` | `/api/search` | `scripts/browser_smoke.py` |
+| **Frontend: store list upload** | `parseStoreList`, `parseCsv`, `onUpload` in `web/app.js` | step 3 in `web/index.html` | browser smoke (upload) |
+| **Frontend: map layers, colors, layer toggles, zoom hint** | `setupLayers`, `metersToPixels`, `setLayerVisible`, `updateZoomHint` in `web/app.js` | colors in `web/styles.css` (`--accent`, `--own`, `--skip`) | browser smoke (screenshots, axe) |
 | **Frontend: controls, URL sharing** | `state`, `syncUrl`, `restoreFromUrl`, `init` in `web/app.js` | `web/index.html` | browser smoke (URL restore) |
 | **Security headers / CSP** | `CONTENT_SECURITY_POLICY` and middleware in `api.py` | add new third-party origins here *and* test in a browser | `test_api.py::test_frontend_*` |
 | **Real client IP** | `deploy/Caddyfile.snippet` (server) | `scripts/update_caddy_cloudflare_ips.sh`, `ratelimit.py` docstring | `test_api.py::test_x_forwarded_for_is_ignored` |

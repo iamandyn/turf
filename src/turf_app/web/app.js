@@ -16,15 +16,22 @@ const STATES = [
 ];
 const METERS_PER_MILE = 1609.344;
 const LIST_LIMIT = 300;  // rows shown in the sidebar list; the map and exports have all of them
+const MAX_CHAINS = 10;   // matches MAX_CHAINS in targets.py
+const MAX_UPLOAD = 5000; // matches MAX_UPLOADED_LOCATIONS in targets.py
+const DEFAULT_OWN_RADIUS = { only_near: 3, skip_near: 1 };  // matches targets.py
 
 const state = {
-  target: null,       // SearchResult: a chain, or a category (every business of a kind)
-  own: null,          // SearchResult with kind "chain": the user's own locations
+  targets: [],        // SearchResults: up to MAX_CHAINS chains, or exactly one category
+  own: null,          // SearchResult with kind "chain": the user's own chain
+  uploaded: null,     // { fileName, locations: [{name, lat, lon}] } from an uploaded CSV
+  ownFilter: "only_near",
   usState: "",
   radiusMi: 1,
-  ownRadiusMi: 1,
+  ownRadiusMi: DEFAULT_OWN_RADIUS.only_near,
   unverified: false,
 };
+const hasOwn = () => Boolean(state.own || state.uploaded);
+const isCategory = () => state.targets.length === 1 && state.targets[0].kind === "category";
 let lastResult = null;
 let requestSeq = 0;   // drops responses that arrive after a newer request
 
@@ -63,20 +70,134 @@ const postJson = async (path, body) =>
 
 function targetRequest() {
   return {
-    chain_key: state.target.kind === "chain" ? state.target.key : null,
-    category: state.target.kind === "category" ? state.target.key : null,
+    chain_keys: isCategory() ? null : state.targets.map((t) => t.key),
+    category: isCategory() ? state.targets[0].key : null,
     radius_mi: state.radiusMi,
     include_unverified: state.unverified,
     states: state.usState ? [state.usState] : null,
-    exclude_chain_key: state.own ? state.own.key : null,
-    exclude_radius_mi: state.ownRadiusMi,
+    own_chain_key: state.own ? state.own.key : null,
+    own_locations: state.uploaded ? state.uploaded.locations : null,
+    own_filter: state.ownFilter,
+    own_radius_mi: state.ownRadiusMi,
     campaign_name: $("campaign").value.trim() || null,
   };
 }
 
+function targetLabel() {
+  if (state.targets.length <= 2) return state.targets.map((t) => t.display_name).join(" and ");
+  return `${state.targets[0].display_name} and ${state.targets.length - 1} more`;
+}
+
+function ownLabel() {
+  const parts = [];
+  if (state.own) parts.push(state.own.display_name);
+  if (state.uploaded) parts.push(`uploaded stores`);
+  return parts.join(" + ");
+}
+
+// ---------- Store list upload ----------
+
+// Minimal CSV parser: quoted fields, doubled quotes, comma / semicolon / tab.
+function parseCsv(text) {
+  const firstLine = text.slice(0, text.indexOf("\n") >>> 0);
+  const delim = [",", ";", "\t"].sort((a, b) => firstLine.split(b).length - firstLine.split(a).length)[0];
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === delim) { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.some((v) => v.trim())) rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field);
+  if (row.some((v) => v.trim())) rows.push(row);
+  return rows;
+}
+
+// Returns { locations, skipped } or throws an Error with a message for the user.
+function parseStoreList(text) {
+  const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+  if (!rows.length) throw new Error("That file is empty.");
+  const norm = (h) => h.trim().toLowerCase().replace(/[^a-z]/g, "");
+  const header = rows[0].map(norm);
+  const find = (names) => header.findIndex((h) => names.includes(h));
+  let lat = find(["lat", "latitude", "y"]);
+  let lon = find(["lon", "lng", "long", "longitude", "x"]);
+  let name = find(["name", "store", "storename", "location", "locationname", "label", "title"]);
+  if (name < 0) name = find(["address", "streetaddress", "address1"]);
+  let body = rows.slice(1);
+  if (lat < 0 || lon < 0) {
+    // No header: use the first two numeric columns as latitude, longitude.
+    const numeric = rows[0].map((v, i) => (v.trim() !== "" && Number.isFinite(Number(v)) ? i : -1)).filter((i) => i >= 0);
+    if (numeric.length < 2) {
+      throw new Error("Couldn't find latitude and longitude columns. Name them \"latitude\" and \"longitude\" (Turf doesn't geocode addresses yet).");
+    }
+    [lat, lon] = numeric;
+    name = rows[0].findIndex((v, i) => i !== lat && i !== lon && v.trim() && !Number.isFinite(Number(v)));
+    body = rows;
+  }
+  let locations = [];
+  let skipped = 0;
+  for (const r of body) {
+    const la = Number(r[lat]), lo = Number(r[lon]);
+    if (r[lat]?.trim() && r[lon]?.trim() && Math.abs(la) <= 90 && Math.abs(lo) <= 180) {
+      const label = name >= 0 ? (r[name] || "").trim().slice(0, 200) : "";
+      locations.push({ name: label || null, lat: la, lon: lo });
+    } else skipped++;
+  }
+  if (!locations.length) throw new Error("No rows had a valid latitude and longitude.");
+  // US stores have positive latitude and negative longitude; swapped columns are a common mistake.
+  if (locations.every((l) => l.lat < 0 && l.lon > 0 && l.lon <= 90)) {
+    locations = locations.map((l) => ({ ...l, lat: l.lon, lon: l.lat }));
+  }
+  if (locations.length > MAX_UPLOAD) {
+    throw new Error(`That's ${fmt.format(locations.length)} locations; the limit is ${fmt.format(MAX_UPLOAD)}.`);
+  }
+  return { locations, skipped };
+}
+
+function showUploadError(message) {
+  const el = $("upload-error");
+  el.textContent = message || "";
+  el.hidden = !message;
+}
+
+async function onUpload(file) {
+  showUploadError("");
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { showUploadError("That file is over 5 MB. Keep just the name, latitude and longitude columns."); return; }
+  try {
+    const { locations, skipped } = parseStoreList(await file.text());
+    state.uploaded = { fileName: file.name, locations, skipped };
+    update({ fit: false });
+  } catch (err) {
+    showUploadError(err.message);
+  }
+}
+
+function downloadTemplate() {
+  const csv = "name,latitude,longitude\nDowntown store,30.2672,-97.7431\nNorth store,30.4021,-97.7253\n";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "turf-store-list-example.csv";
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 // ---------- Chain search (accessible combobox) ----------
 
-// kind: null for chains and categories, "chain" for chains only.
+// kind(): null for chains and categories, "chain" for chains only.
 function setupCombo(inputId, listId, kind, onPick) {
   const input = $(inputId);
   const list = $(listId);
@@ -97,7 +218,7 @@ function setupCombo(inputId, listId, kind, onPick) {
     if (!items.length) {
       const li = document.createElement("li");
       li.className = "none";
-      li.textContent = "No chains found. Try a shorter name.";
+      li.textContent = kind() === "chain" ? "No chains found. Try a shorter name." : "Nothing found. Try a shorter name.";
       list.append(li);
     }
     items.forEach((c, i) => {
@@ -109,9 +230,11 @@ function setupCombo(inputId, listId, kind, onPick) {
       name.textContent = c.display_name;
       const meta = document.createElement("span");
       meta.className = "meta";
+      // Chains show their main category, so similar names ("Orangetheory" the gym
+      // vs. a store) can be told apart.
       meta.textContent = c.kind === "category"
-        ? `category · ${fmt.format(c.n_open)} open`
-        : `${fmt.format(c.n_open)} open`;
+        ? `every business in category · ${fmt.format(c.n_open)} open`
+        : [c.detail && c.detail.replaceAll("_", " "), `${fmt.format(c.n_open)} open`].filter(Boolean).join(" · ");
       li.append(name, meta);
       li.addEventListener("mousedown", (e) => { e.preventDefault(); pick(i); });
       list.append(li);
@@ -137,7 +260,7 @@ function setupCombo(inputId, listId, kind, onPick) {
       const mine = ++seq;
       try {
         const results = await getJson(
-          `/api/search?q=${encodeURIComponent(q)}&limit=8` + (kind ? `&kind=${kind}` : ""));
+          `/api/search?q=${encodeURIComponent(q)}&limit=8` + (kind() ? `&kind=${kind()}` : ""));
         if (mine !== seq) return;
         items = results;
         active = items.length ? 0 : -1;
@@ -162,6 +285,11 @@ function renderSelected(boxId, chain, onClear) {
   const box = $(boxId);
   box.innerHTML = "";
   if (!chain) { box.hidden = true; return; }
+  renderSelectedInto(box, chain, onClear);
+  box.hidden = false;
+}
+
+function renderSelectedInto(box, chain, onClear) {
   const text = document.createElement("div");
   const name = document.createElement("div");
   name.className = "name";
@@ -180,7 +308,75 @@ function renderSelected(boxId, chain, onClear) {
   clear.textContent = "×";
   clear.addEventListener("click", onClear);
   box.append(text, clear);
+}
+
+function renderUploaded() {
+  const box = $("upload-selected");
+  box.innerHTML = "";
+  if (!state.uploaded) { box.hidden = true; return; }
+  const u = state.uploaded;
+  const text = document.createElement("div");
+  const name = document.createElement("div");
+  name.className = "name";
+  name.textContent = u.fileName;
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = `${fmt.format(u.locations.length)} of your locations` +
+    (u.skipped ? ` · ${fmt.format(u.skipped)} rows without coordinates ignored` : "") +
+    " · not saved in shared links";
+  text.append(name, meta);
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.setAttribute("aria-label", `Remove ${u.fileName}`);
+  clear.textContent = "×";
+  clear.addEventListener("click", () => { state.uploaded = null; $("own-file").value = ""; update(); });
+  box.append(text, clear);
   box.hidden = false;
+}
+
+function renderTargets() {
+  const ul = $("target-selected");
+  ul.innerHTML = "";
+  state.targets.forEach((t, i) => {
+    const li = document.createElement("li");
+    li.className = "selected";
+    renderSelectedInto(li, t, () => {
+      state.targets.splice(i, 1);
+      update({ fit: true });
+      $("target-input").focus();
+    });
+    ul.append(li);
+  });
+  ul.hidden = state.targets.length === 0;
+  const combo = $("target-combo");
+  const input = $("target-input");
+  const hint = $("target-hint");
+  combo.hidden = isCategory() || state.targets.length >= MAX_CHAINS;
+  if (state.targets.length === 0) {
+    input.placeholder = "A competitor chain or a category";
+    hint.hidden = true;
+  } else if (isCategory()) {
+    hint.textContent = "Remove the category to pick chains instead.";
+    hint.hidden = false;
+  } else if (state.targets.length >= MAX_CHAINS) {
+    hint.textContent = `That's the limit of ${MAX_CHAINS} chains in one list.`;
+    hint.hidden = false;
+  } else {
+    input.placeholder = "Add another competitor chain";
+    hint.hidden = true;
+  }
+}
+
+function addTarget(result) {
+  showError("");
+  if (result.kind === "category") {
+    state.targets = [result];  // a category stands alone: it already covers every chain in it
+  } else {
+    if (state.own && state.own.key === result.key) { showError(`${result.display_name} is set as your own chain.`); return; }
+    if (state.targets.some((t) => t.key === result.key)) return;
+    state.targets = state.targets.filter((t) => t.kind === "chain").concat(result).slice(0, MAX_CHAINS);
+  }
+  update({ fit: true });
 }
 
 // ---------- Map ----------
@@ -218,7 +414,7 @@ function toFeatures(rows, extra = {}) {
 async function setupLayers() {
   await mapReady;
   const empty = { type: "FeatureCollection", features: [] };
-  for (const id of ["targets", "excluded", "own"]) map.addSource(id, { type: "geojson", data: empty });
+  for (const id of ["targets", "dropped", "own"]) map.addSource(id, { type: "geojson", data: empty });
 
   map.addLayer({
     id: "own-radius", type: "circle", source: "own",
@@ -239,7 +435,7 @@ async function setupLayers() {
     },
   });
   map.addLayer({
-    id: "excluded-point", type: "circle", source: "excluded",
+    id: "dropped-point", type: "circle", source: "dropped",
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 2, 10, 5],
       "circle-color": "#ffffff", "circle-stroke-color": "#9aa0a6", "circle-stroke-width": 1.5,
@@ -260,11 +456,33 @@ async function setupLayers() {
     },
   });
 
-  for (const layer of ["target-point", "excluded-point", "own-point"]) {
+  for (const layer of ["target-point", "dropped-point", "own-point"]) {
     map.on("click", layer, (e) => showPopup(e.features[0]));
     map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
   }
+  map.on("zoomend", updateZoomHint);
+  map.on("moveend", updateZoomHint);
+}
+
+// Map layers per legend toggle.
+const LAYER_GROUPS = {
+  targets: ["target-radius", "target-point"],
+  dropped: ["dropped-point"],
+  own: ["own-radius", "own-point"],
+};
+
+function setLayerVisible(group, visible) {
+  for (const id of LAYER_GROUPS[group]) map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+}
+
+// A 1 mi circle is a few pixels at state zoom; say so instead of leaving it invisible.
+function updateZoomHint() {
+  const hint = $("zoom-hint");
+  if (!lastResult || !lastResult.targets.length) { hint.hidden = true; return; }
+  const metersPerPixel = 78271.517 * Math.cos(map.getCenter().lat * Math.PI / 180) / 2 ** map.getZoom();
+  const px = (state.radiusMi * METERS_PER_MILE) / metersPerPixel;
+  hint.hidden = px >= 4;
 }
 
 function showPopup(feature) {
@@ -276,11 +494,22 @@ function showPopup(feature) {
   addr.textContent = [p.address, p.locality, p.state].filter((v) => v && v !== "null").join(", ");
   const meta = document.createElement("div");
   meta.className = "popup-meta";
-  if (p.kind === "excluded") meta.textContent = `Skipped: ${p.distance_mi} mi from your ${p.nearest_own_location}`;
-  else if (p.kind === "own") meta.textContent = "Your location";
-  else meta.textContent = p.status === "open" ? "Open (recent activity)" : "Unverified (no recent activity)";
+  meta.textContent = describe(p);
   root.append(title, addr, meta);
   new maplibregl.Popup({ offset: 8 }).setLngLat(feature.geometry.coordinates).setDOMContent(root).addTo(map);
+}
+
+const has = (v) => v !== null && v !== undefined && v !== "null";
+
+function describe(p) {
+  if (p.kind === "own") return "Your location";
+  if (p.kind === "dropped") {
+    return p.reason === "near_yours"
+      ? `Skipped: ${p.distance_mi} mi from your ${p.nearest_own_location}`
+      : `Skipped: none of your locations within ${state.ownRadiusMi} mi`;
+  }
+  const status = p.status === "open" ? "Open (recent activity)" : "Unverified (no recent activity)";
+  return has(p.distance_mi) ? `${status} · ${p.distance_mi} mi from your ${p.nearest_own_location}` : status;
 }
 
 function fitTo(rows) {
@@ -298,15 +527,15 @@ function showError(message) {
   el.hidden = !message;
 }
 
-function renderList(targets) {
-  const ol = $("target-list");
+function renderList(olId, moreId, rows, kind) {
+  const ol = $(olId);
   ol.innerHTML = "";
-  targets.slice(0, LIST_LIMIT).forEach((t) => {
+  rows.slice(0, LIST_LIMIT).forEach((t) => {
     const li = document.createElement("li");
     li.tabIndex = 0;
     const name = document.createElement("div");
     name.textContent = t.name;
-    if (t.status !== "open") {
+    if (kind === "target" && t.status !== "open") {
       const tag = document.createElement("span");
       tag.className = "tag";
       tag.textContent = "unverified";
@@ -316,68 +545,98 @@ function renderList(targets) {
     addr.className = "addr";
     addr.textContent = [t.address, t.locality, t.state].filter(Boolean).join(", ");
     li.append(name, addr);
+    if (kind === "dropped" || has(t.distance_mi)) {
+      const why = document.createElement("div");
+      why.className = "addr";
+      why.textContent = describe({ ...t, kind }).replace(/^Open \(recent activity\) · |^Unverified \(no recent activity\) · /, "");
+      li.append(why);
+    }
     const go = () => {
       map.flyTo({ center: [t.lon, t.lat], zoom: 12 });
-      showPopup({ geometry: { coordinates: [t.lon, t.lat] }, properties: { ...t, kind: "target" } });
+      showPopup({ geometry: { coordinates: [t.lon, t.lat] }, properties: { ...t, kind } });
     };
     li.addEventListener("click", go);
     li.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
     ol.append(li);
   });
-  const more = $("list-more");
-  more.hidden = targets.length <= LIST_LIMIT;
-  more.textContent = `Showing ${LIST_LIMIT} of ${fmt.format(targets.length)}. All of them are on the map and in the export.`;
-  $("list-section").hidden = targets.length === 0;
+  const more = $(moreId);
+  more.hidden = rows.length <= LIST_LIMIT;
+  more.textContent = kind === "target"
+    ? `Showing ${LIST_LIMIT} of ${fmt.format(rows.length)}. All of them are on the map and in the export.`
+    : `Showing ${LIST_LIMIT} of ${fmt.format(rows.length)}. All of them are on the map.`;
+}
+
+function renderLists(result) {
+  renderList("target-list", "list-more", result.targets, "target");
+  renderList("dropped-list", "dropped-more", result.dropped, "dropped");
+  $("dropped-title").textContent = `${fmt.format(result.dropped.length)} skipped` +
+    (state.ownFilter === "only_near" ? ` (not within ${state.ownRadiusMi} mi of yours)` : ` (within ${state.ownRadiusMi} mi of yours)`);
+  $("dropped-section").hidden = result.dropped.length === 0;
+  $("list-section").hidden = result.targets.length === 0 && result.dropped.length === 0;
+}
+
+function renderLegend() {
+  const own = hasOwn();
+  document.querySelector('.legend [data-layer="dropped"]').hidden = !own;
+  document.querySelector('.legend [data-layer="own"]').hidden = !own;
+  $("legend-dropped").textContent = state.ownFilter === "only_near" ? "Skipped (not near yours)" : "Skipped (near yours)";
 }
 
 async function refresh({ fit = false } = {}) {
   syncUrl();
   showError("");
-  const hasTarget = Boolean(state.target);
+  renderLegend();
+  const hasTarget = state.targets.length > 0;
   $("empty-state").hidden = hasTarget;
   $("examples").hidden = hasTarget;
   if (!hasTarget) {
+    lastResult = null;
     $("summary").hidden = true;
     $("export").hidden = true;
     $("list-section").hidden = true;
     await mapReady;
-    for (const id of ["targets", "excluded", "own"]) map.getSource(id).setData(toFeatures([]));
+    for (const id of ["targets", "dropped"]) map.getSource(id).setData(toFeatures([]));
+    await drawOwnOnly();
+    updateZoomHint();
     return;
   }
 
   const mine = ++requestSeq;
   $("loading").hidden = false;
   try {
-    const ownPromise = state.own
-      ? getJson(`/api/chains/${encodeURIComponent(state.own.key)}/locations?include_unverified=true` +
-          (state.usState ? `&state=${state.usState}` : ""))
-      : Promise.resolve(null);
-    const [result, own] = await Promise.all([postJson("/api/targets", targetRequest()), ownPromise]);
+    const [result, ownRows] = await Promise.all([postJson("/api/targets", targetRequest()), ownLocations()]);
     if (mine !== requestSeq) return;
     lastResult = result;
 
     await mapReady;
     const radiusM = state.radiusMi * METERS_PER_MILE;
     map.getSource("targets").setData(toFeatures(result.targets, { kind: "target", radius_m: radiusM }));
-    map.getSource("excluded").setData(toFeatures(result.excluded, { kind: "excluded" }));
-    map.getSource("own").setData(toFeatures(own ? own.locations : [], { kind: "own", radius_m: state.ownRadiusMi * METERS_PER_MILE }));
+    map.getSource("dropped").setData(toFeatures(result.dropped, { kind: "dropped" }));
+    map.getSource("own").setData(toFeatures(ownRows, { kind: "own", radius_m: state.ownRadiusMi * METERS_PER_MILE }));
 
     $("n-targets").textContent = fmt.format(result.targets.length);
     const where = state.usState ? ` in ${STATES.find(([c]) => c === state.usState)[1]}` : " in the US";
-    const parts = [`${state.target.display_name}${where}, ${state.radiusMi} mi radius`];
-    if (state.own) parts.push(`${fmt.format(result.excluded_count)} skipped within ${state.ownRadiusMi} mi of your ${state.own.display_name}`);
+    const parts = [`${targetLabel()}${where}, ${state.radiusMi} mi radius`];
+    if (hasOwn()) {
+      parts.push(state.ownFilter === "only_near"
+        ? `only within ${state.ownRadiusMi} mi of your ${ownLabel()} (${fmt.format(result.dropped_count)} farther skipped)`
+        : `${fmt.format(result.dropped_count)} skipped within ${state.ownRadiusMi} mi of your ${ownLabel()}`);
+    }
     if (!state.unverified) parts.push("confirmed-open only");
     $("summary-detail").textContent = parts.join(" · ");
     $("summary").hidden = false;
     $("export").hidden = result.targets.length === 0;
-    if (!$("campaign").value) $("campaign").placeholder = `Turf - ${state.target.key}`;
+    if (!$("campaign").value) $("campaign").placeholder = `Turf - ${defaultCampaignKey()}`;
     if (result.targets.length === 0) {
-      showError(result.candidates
-        ? "Every location is near one of yours. Lower the skip distance to keep some."
-        : "No locations match. Try all states or include unverified locations.");
+      showError(!result.candidates
+        ? "No locations match. Try all states or include unverified locations."
+        : state.ownFilter === "only_near"
+          ? `None are within ${state.ownRadiusMi} mi of your locations. Widen the distance, or switch to "Skip near mine".`
+          : "Every location is near one of yours. Lower the skip distance to keep some.");
     }
-    renderList(result.targets);
-    if (fit) fitTo(result.targets.length ? result.targets : (own ? own.locations : []));
+    renderLists(result);
+    if (fit) fitTo(result.targets.length ? result.targets : ownRows);
+    updateZoomHint();
   } catch (err) {
     if (mine !== requestSeq) return;
     // Don't leave the previous results next to the error.
@@ -385,17 +644,52 @@ async function refresh({ fit = false } = {}) {
     $("summary").hidden = true;
     $("export").hidden = true;
     $("list-section").hidden = true;
-    for (const id of ["targets", "excluded"]) map.getSource(id).setData(toFeatures([]));
+    for (const id of ["targets", "dropped"]) map.getSource(id).setData(toFeatures([]));
+    updateZoomHint();
     showError(err.message);
   } finally {
     if (mine === requestSeq) $("loading").hidden = true;
   }
 }
 
+// Same rule as TargetRequest.target_key, for the campaign placeholder.
+function defaultCampaignKey() {
+  const keys = state.targets.map((t) => t.key);
+  return keys.length === 1 ? keys[0] : `${keys[0]} and ${keys.length - 1} more`;
+}
+
+// Your locations for the map: your chain's (from the API, unverified included,
+// same as the backend uses) plus any uploaded ones.
+async function ownLocations() {
+  const rows = [];
+  if (state.own) {
+    const res = await getJson(`/api/chains/${encodeURIComponent(state.own.key)}/locations?include_unverified=true` +
+      (state.usState ? `&state=${state.usState}` : ""));
+    rows.push(...res.locations);
+  }
+  if (state.uploaded) {
+    rows.push(...state.uploaded.locations.map((l, i) => ({
+      id: `upload-${i}`, name: l.name || "Your location", address: null, locality: null, state: null, lat: l.lat, lon: l.lon,
+    })));
+  }
+  return rows;
+}
+
+// With no competitor picked yet, still show your locations once you add them.
+async function drawOwnOnly() {
+  try {
+    const rows = await ownLocations();
+    map.getSource("own").setData(toFeatures(rows, { kind: "own", radius_m: state.ownRadiusMi * METERS_PER_MILE }));
+    if (rows.length && state.uploaded) fitTo(rows);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
 // ---------- Export ----------
 
 async function exportCsv(format, button) {
-  if (!state.target) return;
+  if (!state.targets.length) return;
   button.disabled = true;
   showError("");
   try {
@@ -422,11 +716,15 @@ async function exportCsv(format, button) {
 
 function syncUrl() {
   const p = new URLSearchParams();
-  if (state.target) p.set(state.target.kind === "category" ? "cat" : "chain", state.target.key);
-  if (state.own) p.set("own", state.own.key);
+  for (const t of state.targets) p.append(t.kind === "category" ? "cat" : "chain", t.key);
+  if (state.own) {
+    p.set("own", state.own.key);
+    // Always written with `own`, so old links (which meant "skip near") are recognisable.
+    p.set("mode", state.ownFilter === "only_near" ? "near" : "skip");
+    if (state.ownRadiusMi !== DEFAULT_OWN_RADIUS[state.ownFilter]) p.set("d", String(state.ownRadiusMi));
+  }
   if (state.usState) p.set("state", state.usState);
   if (state.radiusMi !== 1) p.set("r", String(state.radiusMi));
-  if (state.own && state.ownRadiusMi !== 1) p.set("skip", String(state.ownRadiusMi));
   if (state.unverified) p.set("unverified", "1");
   const qs = p.toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
@@ -441,13 +739,21 @@ async function restoreFromUrl() {
   const p = new URLSearchParams(location.search);
   const clamp = (v, lo, hi, d) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
   state.radiusMi = clamp(parseFloat(p.get("r")), 1, 50, 1);
-  state.ownRadiusMi = clamp(parseFloat(p.get("skip")), 0.5, 10, 1);
+  // Links from before "only near" existed have `own` without `mode` and meant skip-near,
+  // with the distance in `skip`.
+  state.ownFilter = p.get("own") && p.get("mode") !== "near" ? "skip_near" : "only_near";
+  state.ownRadiusMi = clamp(parseFloat(p.get("d") ?? p.get("skip")), 0.5, 25, DEFAULT_OWN_RADIUS[state.ownFilter]);
   state.unverified = p.get("unverified") === "1";
   const st = (p.get("state") || "").toUpperCase();
   state.usState = STATES.some(([c]) => c === st) ? st : "";
   try {
-    if (p.get("chain")) state.target = await lookup("chain", p.get("chain"));
-    else if (p.get("cat")) state.target = await lookup("category", p.get("cat"));
+    if (p.get("cat")) {
+      const c = await lookup("category", p.get("cat"));
+      state.targets = c ? [c] : [];
+    } else {
+      const keys = [...new Set(p.getAll("chain"))].slice(0, MAX_CHAINS);
+      state.targets = (await Promise.all(keys.map((k) => lookup("chain", k)))).filter(Boolean);
+    }
     if (p.get("own")) state.own = await lookup("chain", p.get("own"));
   } catch (err) {
     showError(err.message);
@@ -456,6 +762,7 @@ async function restoreFromUrl() {
   $("own-radius").value = state.ownRadiusMi;
   $("unverified").checked = state.unverified;
   $("state-select").value = state.usState;
+  document.querySelector(`input[name="own-filter"][value="${state.ownFilter}"]`).checked = true;
   updateOutputs();
 }
 
@@ -464,9 +771,13 @@ async function restoreFromUrl() {
 function updateOutputs() {
   $("radius-out").textContent = `${state.radiusMi} mi`;
   $("own-radius-out").textContent = `${state.ownRadiusMi} mi`;
-  $("own-radius-field").hidden = !state.own;
-  renderSelected("target-selected", state.target, () => { state.target = null; updateOutputs(); refresh(); });
-  renderSelected("own-selected", state.own, () => { state.own = null; updateOutputs(); refresh(); });
+  $("own-radius-label").textContent = state.ownFilter === "only_near" ? "Keep targets within" : "Skip targets within";
+  $("own-radius").value = state.ownRadiusMi;
+  $("own-radius-field").hidden = !hasOwn();
+  $("own-mode").hidden = !hasOwn();
+  renderTargets();
+  renderSelected("own-selected", state.own, () => { state.own = null; update(); });
+  renderUploaded();
 }
 
 async function update(opts) {
@@ -483,13 +794,31 @@ function init() {
   const select = $("state-select");
   for (const [code, name] of STATES) select.add(new Option(name, code));
 
-  setupCombo("target-input", "target-results", null, (c) => { state.target = c; update({ fit: true }); });
-  setupCombo("own-input", "own-results", "chain", (c) => { state.own = c; update(); });
+  // Once a chain is picked, the search only offers more chains.
+  setupCombo("target-input", "target-results", () => (state.targets.length ? "chain" : null), addTarget);
+  setupCombo("own-input", "own-results", () => "chain", (c) => {
+    if (state.targets.some((t) => t.key === c.key)) { showError(`${c.display_name} is already a competitor in step 1.`); return; }
+    state.own = c;
+    update();
+  });
+  $("own-file").addEventListener("change", (e) => onUpload(e.target.files[0]));
+  $("own-template").addEventListener("click", downloadTemplate);
+  document.querySelectorAll('input[name="own-filter"]').forEach((r) => r.addEventListener("change", (e) => {
+    // Each mode has its own sensible distance: a few miles to switch, a mile to skip.
+    if (state.ownRadiusMi === DEFAULT_OWN_RADIUS[state.ownFilter]) state.ownRadiusMi = DEFAULT_OWN_RADIUS[e.target.value];
+    state.ownFilter = e.target.value;
+    update();
+  }));
+  document.querySelectorAll(".legend button").forEach((b) => b.addEventListener("click", () => {
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(on));
+    setLayerVisible(b.dataset.layer, on);
+  }));
 
   document.querySelectorAll("#examples button").forEach((b) => b.addEventListener("click", async () => {
     try {
       const c = await lookup(b.dataset.kind || "chain", b.dataset.key);
-      if (c) { state.target = c; update({ fit: true }); }
+      if (c) addTarget(c);
     } catch (err) { showError(err.message); }
   }));
 

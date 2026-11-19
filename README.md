@@ -1,15 +1,16 @@
 # Turf
 
-> **Pick a competitor, get an ad-ready list of target areas around every one of their locations, built from open Overture Maps data.**
+> **Pick your competitors, get an ad-ready list of target areas around their locations near yours, built from open Overture Maps data.**
 
 **Live:** https://turf.dunkasaur.gg
 
 ![Orangetheory Fitness studios in Texas, skipping those within 1 mile of a Planet Fitness](documents/img/turf-results.png)
 
 **How to use it:**
-1. Search for a competitor chain (or a whole category, like pet boarding).
-2. Optionally narrow it to a state, set the ad radius, and name your own chain so Turf skips targets near your locations.
-3. Export a **Google Ads Editor** CSV (proximity targets, checked by importing into Editor) or a plain CSV for Meta and other tools.
+1. Search for competitor chains (up to 10 in one list), or a whole category, like pet boarding.
+2. Optionally narrow it to a state and set the ad radius.
+3. Optionally add your own locations: pick your chain, upload your store list (CSV with latitude/longitude), or both. By default Turf keeps only competitor locations **near yours**, where customers could switch to you; or flip it to **skip** those near yours so you don't pay to reach your own customers.
+4. Export a **Google Ads Editor** CSV (proximity targets, checked by importing into Editor) or a plain CSV for Meta and other tools.
 
 Every view is a shareable link.
 
@@ -28,6 +29,8 @@ I first considered an "opportunity score" (demand vs. competition by neighborhoo
 - **"Open" means recently seen.** 18% of chain locations have no recent activity signal in Overture; they explain most of the over-counting (Starbucks: 19,330 listed, 17,522 confirmed open). Turf shows confirmed-open locations by default, with a toggle for the rest, labeled as unverified in exports.
 
 **Product choices:**
+- **"Only near mine" is the default.** I first built "skip near yours" (don't pay to reach your own customers), then reversed it: in geo-conquesting the valuable targets are competitor locations *close* to yours, where switching is realistic. A Planet Fitness 40 miles from your nearest gym is a wasted impression. Skip-near is still one click away.
+- **Store lists need coordinates.** Many brands aren't clean chains in Overture, so you can upload your own list, but Turf doesn't geocode addresses: that needs a paid service and would make results depend on its accuracy.
 - **Radius is limited to 1–50 mi**, Meta's US range, so one export works on both platforms.
 - **Overlapping circles aren't merged.** Both platforms accept overlaps, and merged circles get bigger and less precise.
 - **One list is capped at 25,000 targets.** Nearly every chain fits nationwide (Subway: 22,953); U-Haul (29,531) and broad categories ask for a state.
@@ -35,7 +38,7 @@ I first considered an "opportunity score" (demand vs. competition by neighborhoo
 **Engineering choices:**
 - **Precompute offline, serve a read-only DuckDB file.** Queries take milliseconds, and there's no database server to run. Refreshing the data means rerunning the pipeline and uploading the file (about 5 minutes).
 - **No-build frontend.** Plain JavaScript and MapLibre, served by the same container, so there's one deploy.
-- **CI/CD:** every merge to `main` runs lint, strict typing, and 115 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back automatically if it fails. CI then drives the live site in a real browser.
+- **CI/CD:** every merge to `main` runs lint, strict typing, and 129 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back automatically if it fails. CI then drives the live site in a real browser, including an automated accessibility check (axe-core).
 
 **Not built (yet):**
 - Live ad-platform API integration.

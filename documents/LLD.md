@@ -168,32 +168,38 @@ Within a tier, entries with more open locations come first. `/api/search` uses t
 
 ### 3.3 Targets (`targets.py`)
 
-`TargetRequest`:
+`TargetRequest` (unknown fields are a **422**, so a client still sending a renamed field fails loudly instead of being ignored):
 
 | Field | Type / limits | Default |
 |---|---|---|
-| `chain_key` | competitor chain; **exactly one** of `chain_key` / `category` | |
+| `chain_keys` | 1–10 competitor chains (`MAX_CHAINS`), deduplicated in order; **exactly one** of `chain_keys` / `category` | |
 | `category` | every business in an Overture category, e.g. `pet_groomer` | |
 | `radius_mi` | 1–50 (Meta Ads Manager's US range) | 1 |
 | `include_unverified` | bool | false |
 | `states` | list of 2-letter codes, upper-cased, deduplicated | all |
-| `exclude_chain_key` | your own chain | none |
-| `exclude_radius_mi` | 0.1–50 | 1 |
-| `campaign_name` | ≤ 200 chars | `Turf - <chain_key>` |
+| `own_chain_key` | your own chain; can't also be in `chain_keys` (422) | none |
+| `own_locations` | your stores as `[{name?, lat, lon}]`, ≤ 5,000 (`MAX_UPLOADED_LOCATIONS`); the frontend fills it from an uploaded CSV. Combines with `own_chain_key` | none |
+| `own_filter` | `only_near` (keep targets within `own_radius_mi` of yours) or `skip_near` (drop them) | `only_near` |
+| `own_radius_mi` | 0.1–50 | 3 for `only_near`, 1 for `skip_near` |
+| `campaign_name` | ≤ 200 chars | `Turf - <key>`: the chain key, `<first> and <n> more`, or the category |
 
-**Algorithm** (one SQL query):
-1. Candidates are the chain's (or category's) places matching the status and state filters. They're counted first: more than `MAX_TARGETS` (**25,000**) returns **422 "Pick a state…"**. Nearly every chain fits nationwide (Subway, 22,953 open; Dollar General, 20,572); U-Haul (29,531) and broad categories (restaurants, 280k) need a state.
-2. "Own" locations are **all** of `exclude_chain_key`'s places, *including unverified*: better to skip a target near a store of yours that may be open.
-3. Each candidate's nearest own location is found by haversine distance (miles), prefiltered to a latitude window of `exclude_radius_mi / 69 + 0.01` degrees.
-4. A candidate is excluded if that distance ≤ `exclude_radius_mi`.
+**Why `only_near` is the default.** Geo-conquesting works when the competitor's customers could realistically switch: someone leaving a Planet Fitness 40 miles from your nearest gym won't. So the useful list is competitor locations *near* yours. `skip_near` (the original behavior) is still there for when you'd otherwise pay to reach your own customers.
 
-`TargetResponse = {chain_key, category, radius_mi, candidates, excluded_count, targets: [Target], excluded: [{id, name, address, state, nearest_own_location, distance_mi}]}`.
+**Algorithm** (one SQL query, plus a count):
+1. Candidates are the chains' (or category's) places matching the status and state filters. **Your own chain's places are never candidates** (they can appear in a category). They're counted first: more than `MAX_TARGETS` (**25,000**) returns **422 "Pick a state…"**. Nearly every chain fits nationwide (Subway, 22,953 open; Dollar General, 20,572); U-Haul (29,531) and broad categories (restaurants, 280k) need a state.
+2. "Own" locations are **all** of `own_chain_key`'s places, *including unverified* (a store of yours that may be open still counts), `UNION ALL` the uploaded points, passed to DuckDB as one `STRUCT[]` parameter and `unnest`ed. Uploaded points without a name are labeled `uploaded location`.
+3. Each candidate's nearest own location is found by haversine distance (miles), prefiltered to a latitude window of `own_radius_mi / 69 + 0.01` degrees, and kept if ≤ `own_radius_mi`.
+4. `only_near`: candidates with a nearest own location are targets (with `nearest_own_location`, `distance_mi`); the rest are dropped as `far_from_yours` (their nearest store isn't computed, by design of the window). `skip_near`: the reverse, dropped as `near_yours` with the distance.
+
+`TargetResponse = {chain_keys, category, radius_mi, own_filter, own_radius_mi, own_location_count, candidates, dropped_count, targets: [Target], dropped: [Dropped]}`. `Target` carries `chain_key` (which competitor) and, when near one of yours, `nearest_own_location` and `distance_mi`. `Dropped = {id, name, address, state, lat, lon, reason, nearest_own_location?, distance_mi?}`. `own_filter` and `own_radius_mi` are `null` when no own locations were given.
+
+**Performance** (`scripts/bench_targets.py`, real DB, API container limits of 2 threads / 1 GB): one chain 18 ms; only-near your chain 39 ms; three chains skip-near 82 ms; worst case, Subway (22,953) against 5,000 uploaded stores at 50 mi, 445 ms.
 
 **CSV formats** (`to_csv`):
 - `google_ads_editor`: header `Campaign,Location`; each row is `<campaign>,(<r>mi:<lat 6dp>:<lon 6dp>)`. The proximity format comes from Google Ads Editor's "Add multiple location targets" help page. **Verified manually on 2026-11-18:** a Turf export loaded into Google Ads Editor with every location resolving as a radius target. Editor's *file import* gives "A required account column is missing" if you choose "My data includes account information"; choose "Use selected accounts" instead, or paste through Locations → Make multiple changes. The `Campaign` value must match an existing campaign. Radius is written with `:g`, so `1` stays `1` and `2.5` stays `2.5`.
-- `generic`: `name,address,city,state,postcode,latitude,longitude,radius,radius_unit,status,overture_id`. Status is `open` or `unverified`.
+- `generic`: `name,address,city,state,postcode,latitude,longitude,radius,radius_unit,status,overture_id,nearest_yours,miles_to_yours`. Status is `open` or `unverified`. The last two are filled when the target is within the own radius of one of your locations.
 
-The filename comes from the chain or category key, reduced to `[a-z0-9-]`, so it's safe in `Content-Disposition`.
+The filename comes from `TargetRequest.target_key` (e.g. `turf-orangetheory-fitness-and-1-more-generic.csv`), reduced to `[a-z0-9-]`, so it's safe in `Content-Disposition`.
 
 **Not done:** merging overlapping circles (see HLD §5).
 
@@ -210,12 +216,15 @@ The filename comes from the chain or category key, reduced to `[a-z0-9-]`, so it
 
 | Part | What it does |
 |---|---|
-| `state` | target (chain or category), own chain, US state, radius, skip radius, include-unverified; mirrored to the URL (`?chain=` or `?cat=`, then `&own=&state=&r=&skip=&unverified=1`) by `syncUrl`, restored by `restoreFromUrl` |
-| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over `/api/search` (target: chains and categories; own: `kind=chain`); 200 ms debounce; out-of-order responses dropped |
-| `refresh` | `POST /api/targets`, plus `GET /api/chains/{own}/locations?include_unverified=true` when a skip chain is set; a request counter drops stale responses |
-| map | GeoJSON sources `targets`, `excluded`, `own`. Radius circles are drawn at true scale with a zoom-interpolated `circle-radius` (meters ÷ Web Mercator meters-per-pixel × cos(lat)), so there's no polygon generation even for 17k targets |
+| `state` | targets (up to 10 chains, or one category), own chain, uploaded store list, own filter + distance, US state, radius, include-unverified. Mirrored to the URL by `syncUrl` (`?chain=a&chain=b` or `?cat=`, then `&own=&mode=near|skip&d=&state=&r=&unverified=1`), restored by `restoreFromUrl`. **Old links** (from before `only_near`) have `own` without `mode` and meant skip-near with the distance in `skip`; they still open that way. The uploaded list isn't in the URL (too big); the UI says so |
+| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over `/api/search`; `kind` is a function, so the target box offers chains and categories until a chain is picked, then only chains. Chains show their main category ("gym · 1,275 open") to tell similar names apart. 200 ms debounce; out-of-order responses dropped |
+| `addTarget`, `renderTargets` | a category replaces any chains (it already covers them); a chain replaces a category; duplicates and your own chain are refused |
+| `parseStoreList` | client-side CSV parsing for the upload: comma/semicolon/tab, quoted fields, BOM. Finds `lat/latitude/y` and `lon/lng/long/longitude/x` columns (else the first two numeric columns of a headerless file), a name or address column, skips rows without valid coordinates (and reports how many), swaps columns if every row looks like (lon, lat) in the US, caps at 5,000 rows / 5 MB. Addresses alone are refused: no geocoding |
+| `refresh` | `POST /api/targets`, plus `GET /api/chains/{own}/locations?include_unverified=true` when you set your chain (uploaded points are drawn from memory); a request counter drops stale responses |
+| map | GeoJSON sources `targets`, `dropped`, `own`. Radius circles are drawn at true scale with a zoom-interpolated `circle-radius` (meters ÷ Web Mercator meters-per-pixel × cos(lat)), so there's no polygon generation even for 17k targets. `updateZoomHint` shows "Zoom in to see each target's ad radius" when the circle would be under 4 px at the map center. The legend buttons (`aria-pressed`) toggle layer groups via `setLayerVisible` |
+| lists | targets, and a collapsed "N skipped" list with the reason, each showing the distance to your nearest location when known |
 | export | `POST /api/targets/export`, then downloads the blob with the server's filename |
-| errors | 429s show the `Retry-After` wait; network and API errors show in the action bar |
+| errors | 429s show the `Retry-After` wait; network and API errors show in the action bar; upload errors under the upload button |
 
 The sidebar list shows the first 300 targets; the map and exports have all of them. The phone layout (≤ 800 px) puts the map on top and the panel below.
 
@@ -318,5 +327,5 @@ The `production` environment is optional; add required reviewers there to gate d
 - **Pipeline:** `test_chains.py` and `test_states.py` build tiny DuckDB tables shaped like real cases and run the real `build()` / `fill_states()`.
 - **API:** `conftest.py` builds a serving database **with the real `write_serving_db`**, then `test_api.py` and `test_targets.py` use FastAPI's `TestClient`. Rate limiting is disabled in the shared client and tested separately with small rules.
 - **Convention:** a test case taken from real data says so in a comment, quoting the actual row ("Real case: …").
-- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error or CSP violation, and walks the flow: search, state, radius, skip chain, both exports (row counts must match the on-screen count), URL restore, phone layout. It runs locally against any base URL, and in CI after every deploy.
+- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (results page and phone layout, via `axe-playwright-python`), and walks the flow: search, state, radius, zoom hint, a second competitor, your chain in only-near then skip-near mode, layer toggle, both exports (row counts must match the on-screen count), URL restore, an old-style `&skip=` link, a store-list upload, a broad category, phone layout. It runs locally against any base URL, and in CI after every deploy.
 - **Not covered by automated tests:** the S3 extract scripts (they need network and run for minutes), the shell deploy scripts beyond syntax and the command check, and the Google Ads Editor import, which was checked by hand once (§3.3) and isn't automated.

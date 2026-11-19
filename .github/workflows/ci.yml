@@ -107,14 +107,14 @@ jobs:
           jq -e --arg sha "$GITHUB_SHA" '.commit == $sha' <<<"$meta"
           curl -sf "$base/api/chains/search?q=starbucks" | jq -e '.[0].chain_key == "starbucks"'
           curl -sf -X POST "$base/api/targets" -H 'content-type: application/json' \
-            -d '{"chain_key":"orangetheory fitness","states":["TX"]}' | jq -e '.targets | length > 0'
+            -d '{"chain_keys":["orangetheory fitness"],"states":["TX"]}' | jq -e '.targets | length > 0'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: "0.13.9"
           python-version: "3.12"
           enable-cache: true
-      - name: Browser test of the live site (search, skip, export, shareable URL, phone layout)
+      - name: Browser test of the live site (search, your locations, upload, export, shareable URL, accessibility, phone layout)
         run: |
           uv sync --frozen
           uv run playwright install --with-deps chromium

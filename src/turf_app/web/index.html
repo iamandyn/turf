@@ -19,15 +19,16 @@
 
       <section class="step" aria-labelledby="step1-title">
         <h2 id="step1-title"><span class="num">1</span> Who to target</h2>
-        <div class="combo" data-role="target-search">
-          <label for="target-input" class="sr-only">Competitor chain</label>
+        <ul class="selected-list" id="target-selected" aria-label="Chosen competitors" hidden></ul>
+        <div class="combo" data-role="target-search" id="target-combo">
+          <label for="target-input" class="sr-only">Competitor chain or category</label>
           <input id="target-input" type="search" autocomplete="off" spellcheck="false"
                  placeholder="A competitor chain or a category"
                  role="combobox" aria-expanded="false" aria-autocomplete="list"
-                 aria-controls="target-results">
+                 aria-controls="target-results" aria-describedby="target-hint">
           <ul id="target-results" class="combo-list" role="listbox" hidden></ul>
         </div>
-        <div class="selected" id="target-selected" hidden></div>
+        <p class="hint" id="target-hint" hidden></p>
         <div class="examples" id="examples">
           <span>Try:</span>
           <button type="button" data-key="orangetheory fitness">Orangetheory Fitness</button>
@@ -56,8 +57,8 @@
       </section>
 
       <section class="step" aria-labelledby="step3-title">
-        <h2 id="step3-title"><span class="num">3</span> Skip near yours <em>optional</em></h2>
-        <p class="hint">Don't pay to reach your own customers: drop targets close to your locations.</p>
+        <h2 id="step3-title"><span class="num">3</span> Your locations <em>optional</em></h2>
+        <p class="hint">Focus on competitors near your stores, where their customers could switch to you. Or skip them, so you don't pay to reach your own customers.</p>
         <div class="combo" data-role="own-search">
           <label for="own-input" class="sr-only">Your chain</label>
           <input id="own-input" type="search" autocomplete="off" spellcheck="false"
@@ -66,10 +67,30 @@
                  aria-controls="own-results">
           <ul id="own-results" class="combo-list" role="listbox" hidden></ul>
         </div>
-        <div class="selected" id="own-selected" hidden></div>
+        <div class="selected own" id="own-selected" hidden></div>
+        <div class="upload">
+          <span>or</span>
+          <input id="own-file" class="sr-only" type="file" accept=".csv,.tsv,.txt,text/csv">
+          <label class="file-button" for="own-file">Upload your store list (CSV)</label>
+          <button type="button" class="link" id="own-template">Example file</button>
+        </div>
+        <small class="upload-help">Needs latitude and longitude columns; a name column is optional. Addresses alone aren't geocoded.</small>
+        <div class="selected own" id="upload-selected" hidden></div>
+        <p class="error" id="upload-error" role="alert" hidden></p>
+        <fieldset class="mode" id="own-mode" hidden>
+          <legend class="sr-only">How to use your locations</legend>
+          <label class="radio">
+            <input type="radio" name="own-filter" value="only_near" checked>
+            <span>Only near mine <small>Competitor locations close enough that customers could switch to you.</small></span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="own-filter" value="skip_near">
+            <span>Skip near mine <small>Don't reach people who are already your customers.</small></span>
+          </label>
+        </fieldset>
         <label class="field" id="own-radius-field" hidden>
-          <span>Skip targets within <output id="own-radius-out" for="own-radius">1 mi</output> of yours</span>
-          <input id="own-radius" type="range" min="0.5" max="10" step="0.5" value="1">
+          <span><span id="own-radius-label">Within</span> <output id="own-radius-out" for="own-radius">3 mi</output></span>
+          <input id="own-radius" type="range" min="0.5" max="25" step="0.5" value="3">
         </label>
       </section>
 
@@ -77,6 +98,11 @@
         <h2 id="list-title">Locations</h2>
         <ol id="target-list"></ol>
         <p class="more" id="list-more" hidden></p>
+        <details class="dropped" id="dropped-section" hidden>
+          <summary id="dropped-title">Skipped</summary>
+          <ol id="dropped-list"></ol>
+          <p class="more" id="dropped-more" hidden></p>
+        </details>
       </section>
 
       <footer class="foot">
@@ -111,11 +137,12 @@
 
     <main class="map-wrap">
       <div id="map" role="region" aria-label="Map of target locations"></div>
-      <div class="legend" aria-hidden="true">
-        <span><i class="dot target"></i>Target</span>
-        <span><i class="dot excluded"></i>Skipped (near yours)</span>
-        <span><i class="dot own"></i>Yours</span>
+      <div class="legend" role="group" aria-label="Map layers">
+        <button type="button" aria-pressed="true" data-layer="targets"><i class="dot target"></i>Targets</button>
+        <button type="button" aria-pressed="true" data-layer="dropped" hidden><i class="dot excluded"></i><span id="legend-dropped">Skipped</span></button>
+        <button type="button" aria-pressed="true" data-layer="own" hidden><i class="dot own"></i>Yours</button>
       </div>
+      <p class="zoom-hint" id="zoom-hint" hidden>Zoom in to see each target's ad radius</p>
       <div class="loading" id="loading" hidden>Loading…</div>
     </main>
   </div>

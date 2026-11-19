@@ -19,8 +19,8 @@ turf/
 │   ├── ratelimit.py         Per-IP sliding-window rate limiter
 │   ├── api.py               FastAPI app: routes, exports, DB cursor dependency, middleware, page
 │   └── web/                 Frontend, served at / (no build step)
-│       ├── index.html       Page structure (steps 1–3, results, sticky action bar, map, detail panel)
-│       ├── app.js           All behavior: presets, signals, seeds, state/URL, map, details, export, theme
+│       ├── index.html       Page structure: start screen, report, export bar, map, about dialog
+│       ├── app.js           All behavior: upload parsing, samples, report rendering, map, export, print, theme
 │       ├── theme.js         Applies a saved light/dark choice before first paint
 │       ├── styles.css       Layout and theme (CSS tokens at the top, dark palette below)
 │       └── vendor/maplibre-gl-4.7.1/  Pinned MapLibre build + license
@@ -73,9 +73,11 @@ turf/
 | **MCP tools** (incl. `recommend_from_results`) | `mcp_server.py` | `TURF_MCP_ALLOWED_HOSTS` in the `Dockerfile`; `/mcp` rule in `ratelimit.py` | `tests/test_mcp.py` |
 | **Search** (categories, metros) | `_tiered_search` in `api.py` | `FUZZY_MIN_SIMILARITY` | `test_markets.py::test_*search*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
-| **Frontend: presets, signals, seeds** | `renderPresets`, `renderSignals`, `renderSeeds`, `setupCombo` in `web/app.js` | `web/index.html` steps 1–2 | `scripts/browser_smoke.py` |
-| **Frontend: results, map, detail panel** | `renderResults`, `setupLayers`, `selectMetro`, `renderBars` in `web/app.js` | colors in `web/styles.css` | browser smoke (screenshots, axe) |
-| **Frontend: URL sharing** | `syncUrl`, `restoreFromUrl` in `web/app.js` | | browser smoke (URL restore) |
+| **Frontend: start screen and upload** | `renderStart`, `parseResults`, `COLUMNS`, `onFile`, `openSample` in `web/app.js` | `#start` in `web/index.html` | `scripts/browser_smoke.py` |
+| **Frontend: the report** | `renderReport`, `recCard`, `recDetails`, `selectRec`, `loadBrief` in `web/app.js` | `#report` in `web/index.html`; print CSS in `web/styles.css` | browser smoke (screenshots, axe) |
+| **Frontend: map** | `setupLayers`, `drawMap` in `web/app.js` | colors in `web/styles.css` | browser smoke |
+| **Demo disclaimer** | `<dialog id="about">` in `web/index.html`, `setupAbout` in `web/app.js` | | browser smoke (first visit) |
+| **Frontend: URL sharing** | `syncUrl` and the bottom of `web/app.js` | | browser smoke (URL restore) |
 | **Dark mode / theme colors** | tokens on `:root` and the two dark blocks in `web/styles.css` (keep them identical) | `web/theme.js`, `toggleTheme`, `applyMapTheme`, `themeLayerPaint` in `web/app.js` | browser smoke (dark mode + axe) |
 | **Frontend caching / asset versions** | `VERSIONED_ASSETS`, `render_index` in `api.py` (add any new frontend file there) | cache headers in the middleware | `test_api.py::test_page_references_versioned_assets` |
 | **Security headers / CSP** | `CONTENT_SECURITY_POLICY` and middleware in `api.py` | add new third-party origins here *and* test in a browser | `test_api.py::test_frontend_*` |

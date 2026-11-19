@@ -1,13 +1,11 @@
 """End-to-end browser check of the Turf frontend (headless Chromium via Playwright).
 
 Fails on any console error, page error, CSP violation, or accessibility
-violation (axe-core), and walks the main flow: pick an audience preset, edit
-its signals, add best-performing metros, read a metro's details and brief,
-export both CSVs, reload from the shareable URL, change the population filter,
-load a sample brand's results (signal check, recommendations, export), upload
-an ad report,
-toggle map layers, switch to dark mode, and check the phone layout. Saves
-screenshots.
+violation (axe-core), and walks the report flow: the demo disclaimer on first
+visit, opening a sample brand's report, expanding a recommendation (data and
+brief), both exports, the shareable URL, the sample with no real relationship,
+uploading an ad report and choosing its category, adjusting the signals, dark
+mode, and the phone layout. Saves screenshots.
 
 Usage:
     uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000
@@ -27,13 +25,18 @@ from pathlib import Path
 from axe_playwright_python.sync_playwright import Axe
 from playwright.sync_api import ConsoleMessage, FilePayload, Page, sync_playwright
 
+# Markets as an ad platform labels them; all should match a metro.
+UPLOAD_MARKETS = [
+    "Denver, CO", "Austin, TX", "Seattle, WA", "Portland OR", "Boston, MA", "Atlanta, GA",
+    "Chicago, IL", "Phoenix, AZ", "Dallas, TX", "Minneapolis, MN", "Raleigh, NC", "Nashville, TN",
+]  # fmt: skip
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--out", default="data/screenshots", help="screenshot directory")
-    parser.add_argument("--preset", default="pets")
-    parser.add_argument("--seeds", default="Denver,Austin", help="text typed into the seed box")
+    parser.add_argument("--sample", default="pets")
     args = parser.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -52,158 +55,105 @@ def main() -> None:
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = new_page(accept_downloads=True)
+
+        # 1. First visit: the demo disclaimer opens; it doesn't come back once closed.
         page.goto(args.base_url, wait_until="networkidle")
-        page.wait_for_selector("#map canvas", timeout=15_000)
-        page.wait_for_selector(".preset", timeout=10_000)
-        n_presets = page.locator(".preset").count()
+        page.wait_for_selector("#about[open]", timeout=10_000)
+        about = page.inner_text("#about")
         check(
-            page.locator("#empty-state").is_visible() and n_presets == 6,
-            f"empty state with {n_presets} audience presets",
+            "fictional" in about and "never stored" in about and "No real-time AI" in about,
+            "demo disclaimer shown on first visit",
             problems,
         )
-        page.screenshot(path=str(out / "01-empty.png"))
+        page.screenshot(path=str(out / "01-about.png"))
+        page.click("#about button")
+        page.reload(wait_until="networkidle")
+        page.wait_for_selector(".sample-card", timeout=10_000)
+        check(page.locator("#about[open]").count() == 0, "disclaimer not shown again", problems)
+        n_samples = page.locator(".sample-card").count()
+        check(n_samples == 4, f"start screen: {n_samples} sample brands", problems)
+        page.screenshot(path=str(out / "02-start.png"))
 
-        # 1. A preset ranks metros by signal strength.
-        page.click(f'.preset[data-key="{args.preset}"]')
-        wait_results(page)
-        n_signals = page.locator("#signal-chips li").count()
+        # 2. A sample brand's report.
+        page.click(f'.sample-card[data-key="{args.sample}"]')
+        wait_report(page)
+        n_recs = page.locator(".rec").count()
+        badge = page.inner_text("#verdict-badge")
+        first = page.locator(".rec >> nth=0")
         check(
-            count(page) == 25
-            and n_signals > 0
-            and "Strongest" in (page.text_content("#results-title") or ""),
-            f"{args.preset} preset: {count(page)} metros, {n_signals} signals",
+            n_recs == 5
+            and "Expected" in first.inner_text()
+            and "not running yet" in first.inner_text()
+            and "confidence" in badge
+            and page.locator("#synthetic-note").is_visible()
+            and page.locator("#drivers li").count() >= 1
+            and page.locator("#today-best li").count() == 5
+            and f"sample={args.sample}" in page.url,
+            f"sample report: {n_recs} recommendations, {badge}, first: {first_name(page)}",
             problems,
         )
-        top_strength = first_result(page)
-        print(f"top by signal strength: {top_strength}")
+        page.screenshot(path=str(out / "03-report.png"))
 
-        # 2. Editing the signals makes it a custom audience (in the URL).
-        page.click("#signal-chips li >> nth=0 >> button")
-        wait_results(page)
+        # 3. A recommendation's details and brief.
+        first.locator(".rec-head").click()
+        page.wait_for_selector(".rec.open .rec-body:not([hidden])")
+        page.wait_for_selector(".rec.open .brief-headline", timeout=10_000)
+        body = page.inner_text(".rec.open .rec-body")
         check(
-            "signal=" in page.url and "preset=" not in page.url,
-            f"removed a signal: {page.locator('#signal-chips li').count()} left, custom audience",
-            problems,
-        )
-        page.fill("#signal-input", "yoga")
-        page.wait_for_selector("#signal-results li[aria-selected=true]", timeout=10_000)
-        page.keyboard.press("Enter")
-        wait_results(page)
-        check("yoga" in page.inner_text("#signal-chips"), "added a signal by search", problems)
-        page.click(f'.preset[data-key="{args.preset}"]')  # back to the preset
-        wait_results(page)
-
-        # 3. Best markets today: lookalikes.
-        for name in args.seeds.split(","):
-            page.fill("#seed-input", name)
-            page.wait_for_selector("#seed-results li[aria-selected=true]", timeout=10_000)
-            page.keyboard.press("Enter")
-            wait_results(page)
-        n_seeds = page.locator("#seed-chips li").count()
-        first_row = page.inner_text("#results li >> nth=0")
-        check(
-            n_seeds == len(args.seeds.split(","))
-            and "Closest to your best markets" in (page.text_content("#results-title") or "")
-            and "% match" in first_row
-            and page.url.count("seed=") == n_seeds,
-            f"lookalikes of {args.seeds}: {first_result(page)}",
-            problems,
-        )
-
-        # 4. A metro's details: signals vs. typical, and its brief or a note.
-        page.click("#results li >> nth=0")
-        page.wait_for_selector("#detail:not([hidden])")
-        n_bars = page.locator("#detail-signals li").count()
-        check(n_bars == n_signals, f"detail panel: {n_bars} signal bars", problems)
-        # The demo path (pets, Denver + Austin) has pre-written briefs for its top lookalikes.
-        page.wait_for_selector(
-            "#detail-brief .brief-headline, #detail-brief .muted", timeout=10_000
-        )
-        headline = page.locator("#detail-brief .brief-headline")
-        check(
-            headline.count() == 1,
-            f"creative brief: {headline.inner_text() if headline.count() else '(none)'}",
+            "Most similar markets" in body and "metro=" in page.url,
+            f"recommendation details with brief: {page.inner_text('.rec.open .brief-headline')}",
             problems,
         )
         page.wait_for_timeout(800)  # map zoom
-        page.screenshot(path=str(out / "02-lookalikes.png"))
-        check_a11y(page, "results page", problems)
+        page.screenshot(path=str(out / "04-recommendation.png"))
+        check_a11y(page, "report", problems)
+        more = page.locator("#more-recs")
+        more.click()
+        check(page.locator(".rec").count() > 5, "show more recommendations", problems)
+        more.click()
 
-        # 5. Exports.
+        # 4. Exports.
         for fmt, header in (
             ("zips", ["zip", "country", "metro", "metro_rank"]),
             ("metros", ["rank", "metro", "cbsa_code"]),
         ):
             with page.expect_download() as dl:
-                page.click(f'.export button[data-format="{fmt}"]')
+                page.click(f'.actionbar button[data-format="{fmt}"]')
             rows = list(csv.reader(io.StringIO(Path(dl.value.path()).read_text())))
             ok = rows[0][: len(header)] == header and len(rows) > 1
             if fmt == "metros":
-                ok = ok and len(rows) - 1 == 25
+                ok = ok and rows[0][-1] == "brand_status"
             check(
                 ok, f"{fmt} export: {dl.value.suggested_filename}, {len(rows) - 1} rows", problems
             )
 
-        # 6. The shareable URL restores the same view, selected metro included.
+        # 5. The shareable URL opens the same report and recommendation.
         url = page.url
         page2 = new_page()
         page2.goto(url, wait_until="networkidle")
-        wait_results(page2)
-        page2.wait_for_selector("#detail:not([hidden])", timeout=10_000)
+        page2.wait_for_selector("#about[open]", timeout=10_000)  # a new browser context
+        page2.click("#about button")
+        wait_report(page2)
+        page2.wait_for_selector(".rec.open", timeout=10_000)
         check(
-            first_result(page2) == first_result(page) and "metro=" in url,
+            first_name(page2) == first_name(page),
             f"URL restore ({url.split('?', 1)[-1]})",
             problems,
         )
 
-        # 7. A higher population floor compares fewer metros.
-        page.select_option("#min-pop", "1000000")
-        wait_results(page)
-        detail = page.inner_text("#summary-detail")
-        check("1M+" in detail, f"population filter: {detail.split(' · ')[-1]}", problems)
+        # 6. The sample with no real relationship says so.
+        page.click("#change-brand")
+        page.wait_for_selector("#start:not([hidden])")
+        page.click('.sample-card[data-key="beauty_wellness"]')
+        wait_report(page)
+        badge = page.inner_text("#verdict-badge")
+        check(badge == "Low confidence", f"no-relationship sample: {badge!r}", problems)
 
-        # 7b. A sample brand's results: best markets, signal check, recommendations.
-        brand = new_page(accept_downloads=True)
-        brand.goto(args.base_url, wait_until="networkidle")
-        brand.wait_for_selector(".sample", timeout=10_000)
-        brand.click('#top-samples .sample[data-key="pets"]')
-        wait_results(brand)
-        brand.wait_for_selector("#brand-body:not([hidden])")
-        verdict = brand.inner_text("#check-badge")
-        n_best = brand.locator("#best-chips li").count()
-        tags = brand.locator("#results .status-tag").count()
-        check(
-            brand.locator("#synthetic-note").is_visible()
-            and n_best == 5
-            and verdict in ("Yes", "Partly", "No evidence")
-            and tags == count(brand)
-            and "sample=pets" in brand.url,
-            f"sample brand: verdict {verdict!r}, {n_best} best markets, {tags} recommendations",
-            problems,
-        )
-        with brand.expect_download() as dl:
-            brand.click('.export button[data-format="metros"]')
-        brand_header = Path(dl.value.path()).read_text().splitlines()[0]
-        check(
-            brand_header.endswith("brand_status"),
-            f"brand export: {dl.value.suggested_filename}",
-            problems,
-        )
-        brand.screenshot(path=str(out / "05-brand.png"))
-        check_a11y(brand, "brand results", problems)
-        # The sample with no real relationship says so.
-        brand.click("#brand-clear")
-        wait_results(brand)
-        brand.click('#top-samples .sample[data-key="beauty_wellness"]')
-        wait_results(brand)
-        brand.wait_for_selector("#brand-body:not([hidden])")
-        weak = brand.inner_text("#check-badge")
-        check(weak == "No evidence", f"no-relationship sample: verdict {weak!r}", problems)
-
-        # 7c. Upload an ad report (metro names, one row that won't match).
+        # 7. Upload an ad report, pick its category, adjust a signal.
         upload = new_page()
-        upload.goto(f"{args.base_url}/?preset={args.preset}", wait_until="networkidle")
-        wait_results(upload)
+        upload.goto(args.base_url, wait_until="networkidle")
+        upload.wait_for_selector("#about[open]", timeout=10_000)
+        upload.click("#about button")
         lines = ["Market,Amount spent (USD),Purchases,Purchases conversion value"]
         for i, market in enumerate(UPLOAD_MARKETS):
             lines.append(f'"{market}",{1000 + 50 * i},{20 + i},{1500 + 120 * i}')
@@ -214,39 +164,45 @@ def main() -> None:
             "buffer": ("\n".join(lines) + "\n").encode(),
         }
         upload.set_input_files("#results-file", files=[report])
-        upload.wait_for_selector("#brand-body:not([hidden])", timeout=15_000)
-        meta = upload.inner_text("#brand-meta")
+        upload.wait_for_selector("#upload-step:not([hidden])")
+        summary = upload.inner_text("#file-summary")
+        upload.select_option("#category", "fitness")
+        upload.click("#build-report")
+        wait_report(upload)
+        method = upload.inner_text("#method-matched")
         check(
-            f"{len(UPLOAD_MARKETS)} of {len(UPLOAD_MARKETS) + 1} rows matched" in meta
-            and "Atlantis" in meta,
-            f"uploaded report: {meta[:80]}",
+            "13 rows by market" in summary and "ROAS" in summary
+            and f"{len(UPLOAD_MARKETS)} of {len(UPLOAD_MARKETS) + 1} rows" in method
+            and "Atlantis" in method,
+            f"uploaded report: {method[:70]}",
             problems,
-        )
+        )  # fmt: skip
+        upload.click(".adjust summary")
+        n_before = upload.locator("#signal-chips li").count()
+        upload.click("#signal-chips li >> nth=0 >> button")
+        wait_report(upload)
+        n_after = upload.locator("#signal-chips li").count()
+        check(n_after == n_before - 1, f"adjust signals: {n_before} -> {n_after}", problems)
 
-        # 8. Layer toggles.
-        toggle = page.locator('.legend button[data-layer="seeds"]')
-        toggle.click()
-        check(toggle.get_attribute("aria-pressed") == "false", "legend hides a layer", problems)
-        toggle.click()
-
-        # 9. Dark mode: toggle, accessible, and remembered across reloads.
+        # 8. Dark mode: toggle, accessible, and remembered across reloads.
         page.click("#theme-toggle")
         page.wait_for_timeout(1500)  # basemap swap
         theme = page.evaluate("document.documentElement.dataset.theme")
         check(theme == "dark", f"dark mode toggle: {theme}", problems)
-        page.screenshot(path=str(out / "03-dark.png"))
+        page.screenshot(path=str(out / "05-dark.png"))
         check_a11y(page, "dark mode", problems)
         page.reload(wait_until="networkidle")
-        wait_results(page)
+        wait_report(page)
         pressed = page.get_attribute("#theme-toggle", "aria-pressed")
-        theme = page.evaluate("document.documentElement.dataset.theme")
-        check(theme == "dark" and pressed == "true", "dark mode kept after reload", problems)
+        check(pressed == "true", "dark mode kept after reload", problems)
 
-        # 10. Phone layout.
+        # 9. Phone layout.
         phone = new_page(390, 844, is_mobile=True)
         phone.goto(url, wait_until="networkidle")
-        wait_results(phone)
-        phone.screenshot(path=str(out / "04-phone.png"), full_page=True)
+        phone.wait_for_selector("#about[open]", timeout=10_000)  # a new browser context
+        phone.click("#about button")
+        wait_report(phone)
+        phone.screenshot(path=str(out / "06-phone.png"), full_page=True)
         check_a11y(phone, "phone layout", problems)
         browser.close()
 
@@ -259,25 +215,14 @@ def main() -> None:
     print("all checks passed")
 
 
-# Markets as an ad platform labels them; all should match a metro.
-UPLOAD_MARKETS = [
-    "Denver, CO", "Austin, TX", "Seattle, WA", "Portland OR", "Boston, MA", "Atlanta, GA",
-    "Chicago, IL", "Phoenix, AZ", "Dallas, TX", "Minneapolis, MN", "Raleigh, NC", "Nashville, TN",
-]  # fmt: skip
-
-
-def wait_results(page: Page) -> None:
+def wait_report(page: Page) -> None:
     page.wait_for_load_state("networkidle")
     page.wait_for_selector("#loading[hidden]", state="attached", timeout=15_000)
-    page.wait_for_selector("#summary:not([hidden])", timeout=15_000)
+    page.wait_for_selector("#report:not([hidden])", timeout=15_000)
 
 
-def count(page: Page) -> int:
-    return int(page.inner_text("#n-results").replace(",", ""))
-
-
-def first_result(page: Page) -> str:
-    return page.inner_text("#results li >> nth=0 >> .name")
+def first_name(page: Page) -> str:
+    return page.inner_text(".rec >> nth=0 >> .name")
 
 
 def check_a11y(page: Page, label: str, problems: list[str]) -> None:

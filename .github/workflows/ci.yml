@@ -114,7 +114,7 @@ jobs:
           version: "0.13.9"
           python-version: "3.12"
           enable-cache: true
-      - name: Browser test of the live site (presets, signals, lookalikes, details, exports, shareable URL, dark mode, accessibility, phone)
+      - name: Browser test of the live site (disclaimer, sample report, recommendation details, upload, exports, shareable URL, dark mode, accessibility, phone)
         run: |
           uv sync --frozen
           uv run playwright install --with-deps chromium

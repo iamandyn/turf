@@ -4,15 +4,17 @@
 
 ## 1. Purpose
 
-Turf helps a consumer brand decide **which US metro areas to spend on next**. The brand gives two inputs:
-- **Signals:** a few kinds of local business whose density hints at its audience (pet groomers, dog parks and vets for a pet-care app), or one of six presets.
-- **Its results (optional):** an ad report by ZIP or market, from which Turf picks the best markets and checks whether the signals predict this brand's results; or a few best markets typed in.
+Turf turns **a brand's ad results by location into a market report**: the metro areas its ads should run in next, what to expect there, and the data behind each recommendation. The user uploads an ad-platform report (or opens a sample brand) and says what kind of brand it is. Turf:
+- matches the results to US metro areas and finds the best markets by ROAS or CPA;
+- describes every metro by its mix of local businesses (Overture) and population (Census);
+- checks whether those patterns predict the brand's results, with a permutation test;
+- recommends the metros that look most like the best markets where the brand spends little or nothing, each with an expected result from the brand's most similar markets.
 
-Turf ranks every US metro area by how closely its profile matches the seeds, or by signal strength when there are no seeds. Each result explains itself ("dog walkers: 3.2× the typical metro's share of businesses"). Results export as ZIP lists for Meta and Google Ads, and each preset's top metros come with a pre-written creative brief. The same search is available to AI agents as MCP tools.
+The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The same analysis is available to AI agents as MCP tools.
 
 **Users:** media buyers at an agency like Valid, an AI-native agency whose clients are national consumer brands (subscription apps, DTC, health & fitness, home services) buying on Meta, TikTok and Google. Those brands buy by geography but have no stores, so the question isn't "where are our competitors" but "where else looks like the markets that work for us".
 
-**History:** the first version was a geo-conquesting tool, building target lists around competitors' store locations. It was rebuilt after checking who Valid's clients actually are: almost none have physical locations. The data pipeline and the engineering carried over; the product didn't.
+**History:** the first version was a geo-conquesting tool (target lists around competitors' stores), rebuilt after checking that almost none of Valid's clients have physical locations. A second version was a configurable market explorer (presets, signals, seed metros, filters); it was simplified into this single flow because it was confusing. The data pipeline and the engineering carried over each time.
 
 **Why Overture + Census:** Overture says where every business is and what kind it is, for the whole US, for free. That's enough to describe what each metro is like. The Census adds what Overture lacks: metro boundaries, population and growth. Neither measures demand, so Turf presents signals as a proxy, and the way to validate them is the brand's own results by metro.
 
@@ -49,7 +51,7 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 | **Brand results** (`src/turf_app/performance.py`, `samples.py`) | Match uploaded rows to metros, KPI per metro, best markets, the permutation-tested signal check, weighted recommendations; fictional sample brands with synthetic results | Pure Python |
 | **API** (`src/turf_app/api.py`, `ratelimit.py`, `briefs.py`) | Presets, category and metro search, market ranking, metro/ZIP CSV export, briefs; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
 | **MCP server** (`src/turf_app/mcp_server.py`) | The same search as six read-only tools for AI agents, at `/mcp` in the same app | MCP Python SDK 2.x (streamable HTTP, stateless) |
-| **Frontend** (`src/turf_app/web/`) | One page: audience presets and editable signals, seed metros, filters, ranked list, map, detail panel with signal bars and brief, exports, shareable URLs, light/dark theme | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap |
+| **Frontend** (`src/turf_app/web/`) | Two states: a start screen (sample brands, or upload + one category question) and the report (recommendations with expandable data and briefs, confidence, drivers, markets today, method, adjust signals), map, exports, print layout, demo disclaimer dialog, light/dark theme | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap |
 | **Container** (`Dockerfile`, `deploy/docker-compose.yml`) | Immutable image per commit; data mounted read-only | Docker, Compose |
 | **Edge** (`deploy/Caddyfile.snippet`) | TLS, reverse proxy, real client IP from Cloudflare | Cloudflare proxy, Caddy |
 | **CI/CD** (`.github/workflows/ci.yml`, `scripts/server_deploy.sh`) | Lint, type-check, test; build and push image; deploy with health check and automatic rollback; public smoke test and browser test | GitHub Actions, GHCR, SSH forced command |
@@ -58,7 +60,7 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 
 **Page load:** FastAPI serves `index.html` with content-hashed asset URLs, the scripts, styles and vendored MapLibre, with a strict CSP; map tiles come straight from OpenFreeMap.
 
-**Ranking:** browser or agent → Cloudflare → Caddy (sets `X-Client-IP`) → container → rate limiter → `POST /api/markets` (or the `rank_markets` MCP tool) → `rank_markets()` reads the metros and the signal categories' counts from DuckDB, standardizes, ranks, and returns reasons → JSON.
+**Report:** browser or agent → Cloudflare → Caddy (sets `X-Client-IP`) → container → rate limiter → `POST /api/performance` (or the `recommend_from_results` MCP tool) → `analyze()` matches rows to metros, builds profiles from DuckDB, runs the signal check, ranks lookalikes and attaches similar markets and snapshots → JSON. The rows exist only for that request.
 
 **Code release:** a push to `main` runs the checks. If they pass, CI builds `ghcr.io/iamandyn/turf:<sha>`, then SSHes to the server as `turfdeploy`, whose key can only run `deploy <sha>`. The server pulls the image, switches the container, and waits for `/api/meta` to report that SHA, rolling back if it doesn't. CI then smoke-tests the public URL and drives it in a browser.
 
@@ -77,7 +79,10 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 | **Every result explains itself** | A media buyer has to defend a plan to a client; "2.1× the typical share of pet groomers" is checkable | More data per result |
 | **Census for metros and population** | Overture has neither; CBSAs are the standard public metro definition | A second data source, pinned by SHA-256 |
 | **Export ZIPs, not metro names** | Neither Meta nor Google targets Census metros; both take US ZIP lists | ZIPs that straddle metros go to the metro holding most of their places |
-| **Pre-written briefs, no live LLM calls** | It's a take-home demo: the live site must cost nothing to run however much it's used | Briefs exist only for each preset's top metros (65); see README |
+| **One flow: data in, report out** | The configurable explorer (presets, signals, seeds, filters) was confusing; a strategist wants an answer and the evidence for it | Exploration without data is API/MCP-only (`/api/markets`, `rank_markets`) |
+| **Ask the brand's category, don't detect it** | Trying every category and keeping the best fit would inflate the confidence numbers; the user already knows | One question before the report |
+| **Expected results from similar markets** | Easy to check and honest about spread: the median and range of the brand's three most similar existing markets | A rough estimate, labelled as such |
+| **Pre-written briefs, no live LLM calls; a disclaimer dialog** | It's a take-home demo: the live site must cost nothing to run, and visitors should know the samples are fictional | Briefs exist only for the sample brands' top recommendations (20) |
 | **MCP server in the same app** | Valid already gives clients an MCP server for their account; agents are how an AI-native agency would use this | A runtime dependency (MCP SDK) |
 | **Precompute offline, serve aggregates** | The served file is 5.5 MB; queries take milliseconds; no database server | A data refresh means rerunning the pipeline (~5 minutes) |
 | **Pinned Overture release** | Reproducible results; the release is shown in `/api/meta` | Someone has to run the pipeline monthly |

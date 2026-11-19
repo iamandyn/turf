@@ -1,31 +1,31 @@
-// Turf frontend: market selection. No build step: plain ES module + MapLibre
-// (vendored, global `maplibregl`). State lives in `state` and is mirrored to the
-// URL so any view can be shared.
+// Turf frontend: a brand's results in, a market report out. No build step: plain
+// ES module + MapLibre (vendored, global `maplibregl`).
 
-const MAX_SEEDS = 10;    // matches MAX_SEEDS in markets.py
-const MAX_SIGNALS = 20;  // matches MAX_SIGNALS in markets.py
-const RESULT_LIMIT = 25;
+const MAX_RESULT_ROWS = 20000;  // matches MAX_ROWS in performance.py
+const MAX_SIGNALS = 20;         // matches MAX_SIGNALS in markets.py
+const TOP_RECS = 5;             // shown up front; the rest behind "show more"
+const REC_LIMIT = 15;
 
 const state = {
-  preset: null,       // preset key, or "custom" once the signals are edited
-  signals: [],        // category keys
-  growth: false,      // population growth as a signal
-  seeds: [],          // {key: metro code, display_name, ...}
-  minPopulation: 250000,
-  micro: false,
-  selected: null,     // metro code shown in the detail panel
-  brand: null,        // the brand's results: {name, synthetic, sampleKey, fileName, rows, geo_type, kpi}
+  brand: null,     // {name, synthetic, sampleKey, description, rows, geo_type, kpi}
+  preset: null,    // brand category (a preset key)
+  signals: null,   // null = the preset's; an array once adjusted
+  selected: null,  // metro code highlighted in the report and on the map
+  showAll: false,
 };
-let presets = [];     // from /api/presets
-let samples = [];     // from /api/samples
-let lastBrand = null; // the last /api/performance response
-let lastResult = null;
-let requestSeq = 0;   // drops responses that arrive after a newer request
+let presets = [];
+let samples = [];
+let report = null;   // the last /api/performance response
+let pending = null;  // an uploaded file waiting for its category
+let requestSeq = 0;
 
 const $ = (id) => document.getElementById(id);
 const fmt = new Intl.NumberFormat("en-US");
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
-const label = (key) => key.replaceAll("_", " ");
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const short = (name) => name.split(",")[0].split("-")[0];
+const kpiValue = (kpi, v) => (v === null || v === undefined ? "n/a" : kpi === "roas" ? `${v.toFixed(2)}x` : money.format(v));
+const kpiName = (kpi) => (kpi === "roas" ? "ROAS" : "CPA");
 
 // ---------- API ----------
 
@@ -47,6 +47,7 @@ async function api(path, options = {}) {
     try {
       const body = await resp.json();
       if (typeof body.detail === "string") detail = body.detail;
+      else if (Array.isArray(body.detail) && body.detail[0]?.msg) detail = body.detail[0].msg.replace(/^Value error, /, "");
     } catch { /* not JSON */ }
     throw new ApiError(detail);
   }
@@ -57,34 +58,22 @@ const getJson = async (path) => (await api(path)).json();
 const postJson = async (path, body) =>
   (await api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
 
-function marketRequest() {
-  const edited = state.preset === "custom" || !state.preset;
-  return {
-    preset: edited ? null : state.preset,
-    categories: edited ? state.signals : null,
-    use_growth: state.growth,
-    seeds: state.seeds.map((s) => s.key),
-    min_population: state.minPopulation,
-    include_micro: state.micro,
-    limit: RESULT_LIMIT,
-  };
-}
-
-function performanceRequest() {
-  const m = marketRequest();
+function reportRequest() {
   return {
     rows: state.brand.rows, geo_type: state.brand.geo_type, kpi: state.brand.kpi,
-    preset: m.preset, categories: m.categories, use_growth: m.use_growth,
-    min_population: m.min_population, include_micro: m.include_micro, limit: m.limit,
+    preset: state.signals ? null : state.preset,
+    categories: state.signals,
+    limit: REC_LIMIT,
   };
 }
 
-const hasSignals = () => state.signals.length > 0 || state.growth;
-const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-const kpiText = (kpi, value) => value === null ? "n/a"
-  : kpi === "roas" ? `${value.toFixed(2)}x ROAS` : `${money.format(value)} CPA`;
+function showError(id, message) {
+  const el = $(id);
+  el.textContent = message || "";
+  el.hidden = !message;
+}
 
-// ---------- Brand results: CSV upload ----------
+// ---------- Upload ----------
 
 // Minimal CSV parser: quoted fields, doubled quotes, comma / semicolon / tab.
 function parseCsv(text) {
@@ -112,8 +101,6 @@ function parseCsv(text) {
   return rows;
 }
 
-const MAX_RESULT_ROWS = 20000;  // matches MAX_ROWS in performance.py
-
 // Column names ad platforms use (Meta Ads Manager, Google Ads geo reports, generic exports).
 const COLUMNS = {
   zip: ["zip", "zipcode", "zip code", "postal code", "postcode", "postal"],
@@ -126,16 +113,16 @@ const COLUMNS = {
 
 // Returns {rows, geo_type, kpi} or throws an Error with a message for the user.
 function parseResults(text) {
-  const table = parseCsv(text.replace(/^\uFEFF/, ""));
+  const table = parseCsv(text.replace(/^﻿/, ""));
   if (table.length < 2) throw new Error("That file has no data rows.");
   const norm = (h) => h.toLowerCase().replace(/[()$.,]/g, "").replace(/[_-]/g, " ").replace(/\s+/g, " ").trim();
   const header = table[0].map(norm);
   const find = (names) => header.findIndex((h) => names.includes(h));
   const zip = find(COLUMNS.zip), geo = find(COLUMNS.geo), stateCol = find(COLUMNS.state);
   const spend = find(COLUMNS.spend), conv = find(COLUMNS.conversions), rev = find(COLUMNS.revenue);
-  if (zip < 0 && geo < 0) throw new Error("Couldn't find a location column. Name it \"zip\", or \"market\" with values like \"Austin, TX\".");
-  if (spend < 0) throw new Error("Couldn't find a spend column (\"spend\", \"cost\" or \"amount spent\").");
-  if (conv < 0 && rev < 0) throw new Error("Couldn't find conversions or revenue (\"conversions\", \"purchases\", \"revenue\", \"conversion value\"...).");
+  if (zip < 0 && geo < 0) throw new Error('Couldn\'t find a location column. Name it "zip", or "market" with values like "Austin, TX".');
+  if (spend < 0) throw new Error('Couldn\'t find a spend column ("spend", "cost" or "amount spent").');
+  if (conv < 0 && rev < 0) throw new Error('Couldn\'t find conversions or revenue ("conversions", "purchases", "revenue", "conversion value"...).');
   const num = (v) => { const n = Number(String(v ?? "").replace(/[$,\s]/g, "")); return Number.isFinite(n) && n >= 0 ? n : null; };
   const rows = [];
   for (const r of table.slice(1)) {
@@ -152,114 +139,243 @@ function parseResults(text) {
   return { rows, geo_type: zip >= 0 ? "zip" : "metro", kpi };
 }
 
-function showUploadError(message) {
-  const el = $("upload-error");
-  el.textContent = message || "";
-  el.hidden = !message;
-}
-
-async function onResultsFile(file) {
+async function onFile(file) {
   if (!file) return;
-  showUploadError("");
-  if (file.size > 10 * 1024 * 1024) { showError("That file is over 10 MB. Aggregate it by market or ZIP first."); return; }
+  showError("start-error", "");
+  if (file.size > 10 * 1024 * 1024) { showError("start-error", "That file is over 10 MB. Aggregate it by market or ZIP first."); return; }
   try {
     const parsed = parseResults(await file.text());
-    state.brand = { name: file.name, synthetic: false, sampleKey: null, fileName: file.name, ...parsed };
-    update({ fit: true });
+    pending = { name: file.name.replace(/\.[^.]+$/, ""), synthetic: false, sampleKey: null, ...parsed };
+    $("file-summary").textContent = `${file.name}: ${fmt.format(parsed.rows.length)} rows by ${parsed.geo_type === "zip" ? "ZIP code" : "market"}, measured by ${kpiName(parsed.kpi)} (${parsed.kpi === "roas" ? "higher is better" : "lower is better"}).`;
+    $("upload-step").hidden = false;
+    $("category").focus();
   } catch (err) {
-    showError(err.message);
+    showError("start-error", err.message);
   } finally {
     $("results-file").value = "";
   }
 }
 
-async function loadSample(key) {
-  try {
-    const sample = await getJson(`/api/samples/${key}`);
-    const preset = presets.find((p) => p.key === sample.preset);
-    state.brand = { name: sample.name, synthetic: true, sampleKey: key, fileName: null,
-                    rows: sample.rows, geo_type: sample.geo_type, kpi: sample.kpi, description: sample.description };
-    if (preset) { state.preset = preset.key; state.signals = [...preset.categories]; }
-    state.selected = null;
-    await update({ fit: true });
-    $("brand-card").scrollIntoView({ behavior: "smooth", block: "start" });
-  } catch (err) {
-    showError(err.message);
-  }
-}
-
-function clearBrand() {
-  state.brand = null;
-  lastBrand = null;
-  state.selected = null;
-  update({ fit: true });
-}
-
-function downloadBrandCsv() {
-  if (!state.brand) return;
-  const header = state.brand.geo_type === "zip" ? "zip" : "market";
-  const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replaceAll('"', '""')}"` : String(v ?? ""));
-  const lines = [`${header},spend,conversions,revenue`,
-    ...state.brand.rows.map((r) => [r.geo, r.spend, r.conversions ?? "", r.revenue ?? ""].map(esc).join(","))];
+function downloadCsv(filename, lines) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
-  a.download = `${(state.brand.sampleKey ? `turf-sample-${state.brand.sampleKey}` : "results")}.csv`;
+  a.download = filename;
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-function renderSampleButtons() {
-  for (const id of ["top-samples", "sample-buttons"]) {
-    const box = $(id);
-    box.innerHTML = "";
-    for (const smp of samples) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "sample";
-      b.dataset.key = smp.key;
-      b.setAttribute("aria-pressed", String(state.brand?.sampleKey === smp.key));
-      b.textContent = smp.name.replace(/^Sample /, "");
-      b.title = smp.description;
-      b.addEventListener("click", () => loadSample(smp.key));
-      box.append(b);
-    }
+function downloadExample() {
+  downloadCsv("turf-example-results.csv", [
+    "market,spend,purchases,revenue",
+    '"Denver, CO",12500,410,31200', '"Austin, TX",9800,355,27100', '"Seattle, WA",11200,300,22900',
+    '"Atlanta, GA",8700,190,13800', '"Chicago, IL",15400,420,30100', '"Phoenix, AZ",7600,150,10200',
+    '"Boston, MA",10300,330,25600', '"Dallas, TX",9900,240,17800',
+  ]);
+}
+
+// ---------- Start screen ----------
+
+function renderStart() {
+  const cards = $("sample-cards");
+  cards.innerHTML = "";
+  for (const smp of samples) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sample-card";
+    b.dataset.key = smp.key;
+    const name = document.createElement("span");
+    name.className = "name";
+    const label = smp.name.replace(/^Sample /, "");
+    name.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+    const desc = document.createElement("span");
+    desc.className = "desc";
+    desc.textContent = `${smp.description} · measured by ${kpiName(smp.kpi)}`;
+    b.append(name, desc);
+    b.addEventListener("click", () => openSample(smp.key));
+    cards.append(b);
+  }
+  const select = $("category");
+  select.innerHTML = "";
+  for (const p of presets) select.add(new Option(`${p.label} (e.g. ${p.example})`, p.key));
+  const hint = () => {
+    const p = presets.find((x) => x.key === select.value);
+    $("category-hint").textContent = p ? `Compares metros by their share of: ${p.categories.map((c) => c.replaceAll("_", " ")).join(", ")}.` : "";
+  };
+  select.onchange = hint;
+  hint();
+}
+
+async function openSample(key) {
+  showError("start-error", "");
+  try {
+    const smp = await getJson(`/api/samples/${key}`);
+    state.brand = { name: smp.name, synthetic: true, sampleKey: key, description: smp.description,
+                    rows: smp.rows, geo_type: smp.geo_type, kpi: smp.kpi };
+    state.preset = smp.preset;
+    state.signals = null;
+    state.selected = null;
+    state.showAll = false;
+    await buildReport({ fit: true });
+  } catch (err) {
+    showError("start-error", err.message);
   }
 }
 
-function renderBrand() {
-  const b = state.brand;
-  $("manual-seeds").hidden = Boolean(b);
-  $("brand-card").hidden = !b;
-  if (!b) return;
-  $("brand-name").textContent = b.name;
-  $("synthetic-note").hidden = !b.synthetic;
-  const r = lastBrand;
-  $("brand-body").hidden = !r;
-  if (!r) { $("brand-meta").textContent = `${fmt.format(b.rows.length)} rows · ${b.kpi.toUpperCase()}`; return; }
-  const metros = r.metros.length;
-  $("brand-meta").textContent = `${fmt.format(r.matched_rows)} of ${fmt.format(r.rows)} rows matched to ${fmt.format(metros)} metros · ${money.format(r.total_spend)} spend · ${r.kpi === "roas" ? "ROAS (higher is better)" : "CPA (lower is better)"}`
-    + (r.unmatched_examples.length ? ` · unmatched e.g. ${r.unmatched_examples.slice(0, 3).join("; ")}` : "");
-  const best = $("best-chips");
-  best.innerHTML = "";
-  for (const m of r.metros.filter((x) => x.best)) {
-    const li = document.createElement("li");
-    li.className = "chip seed";
-    const span = document.createElement("span");
-    span.textContent = `${m.name.split(",")[0].split("-")[0]} · ${kpiText(r.kpi, m.kpi)}`;
-    span.title = m.name;
-    li.append(span);
-    best.append(li);
+function buildFromUpload() {
+  if (!pending) return;
+  state.brand = pending;
+  state.preset = $("category").value;
+  state.signals = null;
+  state.selected = null;
+  state.showAll = false;
+  buildReport({ fit: true });
+}
+
+function changeBrand() {
+  state.brand = null;
+  report = null;
+  pending = null;
+  $("upload-step").hidden = true;
+  showView();
+  clearMap();
+  syncUrl();
+  $("start").scrollIntoView({ block: "start" });
+}
+
+function showView() {
+  const inReport = Boolean(state.brand && report);
+  $("start").hidden = inReport;
+  $("report").hidden = !inReport;
+  $("actionbar").hidden = !inReport;
+  document.querySelector(".legend").hidden = !inReport;
+}
+
+// ---------- Report ----------
+
+async function buildReport({ fit = false } = {}) {
+  const mine = ++requestSeq;
+  $("loading").hidden = false;
+  showError("error", "");
+  showError("start-error", "");
+  try {
+    const result = await postJson("/api/performance", reportRequest());
+    if (mine !== requestSeq) return;
+    report = result;
+    showView();
+    renderReport();
+    await drawMap({ fit });
+    syncUrl();
+    if (state.selected) selectRec(state.selected, { scroll: false });
+  } catch (err) {
+    if (mine !== requestSeq) return;
+    if (report && state.brand) showError("error", err.message);
+    else { state.brand = null; showView(); showError("start-error", err.message); }
+  } finally {
+    if (mine === requestSeq) $("loading").hidden = true;
   }
-  const verdictLabel = { strong: "Yes", moderate: "Partly", weak: "No evidence", too_few: "Not enough data" };
-  const badge = $("check-badge");
-  badge.textContent = verdictLabel[r.check.verdict];
+}
+
+const presetLabel = () => (presets.find((p) => p.key === state.preset) || {}).label || "this brand";
+const currentSignals = () => state.signals || (presets.find((p) => p.key === state.preset) || {}).categories || [];
+
+function renderReport() {
+  const r = report, b = state.brand, k = r.kpi;
+  $("report-title").textContent = b.name;
+  $("synthetic-note").hidden = !b.synthetic;
+  $("report-meta").textContent = `${presetLabel()} · ${fmt.format(r.metros.length)} markets · ${money.format(r.total_spend)} spend · measured by ${kpiName(k)}`;
+
+  // Where to focus next
+  const best = r.metros.filter((m) => m.best).map((m) => short(m.name));
+  $("focus-intro").textContent = `Metro areas that look most like ${b.synthetic ? "the brand" : b.name}'s best markets (${best.slice(0, 3).join(", ")}${best.length > 3 ? " and others" : ""}), where it spends little or nothing today.`;
+  const ol = $("recs");
+  ol.innerHTML = "";
+  const shown = state.showAll ? r.recommendations.results : r.recommendations.results.slice(0, TOP_RECS);
+  shown.forEach((rec, i) => ol.append(recCard(rec, r.details[i])));
+  const more = $("more-recs");
+  const extra = r.recommendations.results.length - TOP_RECS;
+  more.hidden = extra <= 0;
+  more.textContent = state.showAll ? "Show the top 5 only" : `Show ${extra} more`;
+
+  // Trust
+  const labels = { strong: "High", moderate: "Medium", weak: "Low", too_few: "Not enough data" };
+  const plain = {
+    strong: "The patterns behind these recommendations predicted this brand's results in markets they weren't fitted on.",
+    moderate: "There's some evidence the patterns predict this brand's results. Treat the list as a shortlist to test.",
+    weak: "These patterns don't predict this brand's results; other factors drive its performance. Treat the list as exploratory.",
+    too_few: "Too few markets with enough spend to check the patterns against the brand's results.",
+  };
+  const badge = $("verdict-badge");
+  badge.textContent = `${labels[r.check.verdict]} confidence`;
   badge.className = `badge ${r.check.verdict}`;
-  $("check-summary").textContent = r.check.summary;
-  const ul = $("check-signals");
+  $("verdict-text").textContent = plain[r.check.verdict];
+  $("verdict-detail").textContent = r.check.summary;
+
+  // Drivers
+  const drivers = $("drivers");
+  drivers.innerHTML = "";
+  const helpful = r.check.signals.filter((f) => f.weight > 0 && f.rho >= 0.15);
+  if (!helpful.length || r.check.verdict === "weak" || r.check.verdict === "too_few") {
+    const li = document.createElement("li");
+    li.textContent = "No kind of local business clearly tracks this brand's results; the recommendations weigh all of them equally.";
+    drivers.append(li);
+  }
+  for (const f of helpful.slice(0, 3)) {
+    if (r.check.verdict === "weak" || r.check.verdict === "too_few") break;
+    const li = document.createElement("li");
+    const strong = document.createElement("strong");
+    strong.textContent = f.label;
+    li.append(strong, document.createTextNode(
+      f.best_ratio >= 1.05
+        ? `: the best markets have ${f.best_ratio.toFixed(1)}x the typical share, and more of it goes with better results.`
+        : `: more of it goes with better results across the brand's markets.`));
+    drivers.append(li);
+  }
+  renderSignalBars();
+
+  // Today
+  const trusted = r.metros.filter((m) => m.trusted);
+  const fillMini = (id, list) => {
+    const el = $(id);
+    el.innerHTML = "";
+    for (const m of list) {
+      const li = document.createElement("li");
+      li.textContent = `${short(m.name)}: ${kpiValue(k, m.kpi)} ${kpiName(k)}, ${money.format(m.spend)}`;
+      li.title = m.name;
+      el.append(li);
+    }
+  };
+  fillMini("today-best", trusted.slice(0, 5));
+  fillMini("today-worst", trusted.slice(-5).reverse());
+  $("kpi-col").textContent = kpiName(k);
+  $("all-markets-title").textContent = `All ${fmt.format(r.metros.length)} markets in the data`;
+  const tbody = $("all-markets");
+  tbody.innerHTML = "";
+  for (const m of r.metros) {
+    const tr = document.createElement("tr");
+    if (!m.trusted) tr.className = "muted";
+    [m.name + (m.best ? " ★" : ""), money.format(m.spend), m.trusted ? kpiValue(k, m.kpi) : "too little spend"].forEach((text, i) => {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (i) td.className = "num-col";
+      tr.append(td);
+    });
+    tbody.append(tr);
+  }
+
+  // Method
+  $("method-matched").textContent = `${fmt.format(r.matched_rows)} of ${fmt.format(r.rows)} rows` +
+    (r.unmatched_examples.length ? `; not matched, e.g. ${r.unmatched_examples.slice(0, 3).join("; ")}` : "");
+  $("method-kpi").textContent = k === "roas" ? "return on ad spend (revenue / spend)" : "cost per conversion (spend / conversions)";
+  $("method-category").textContent = presetLabel().toLowerCase();
+  renderSignalChips();
+}
+
+function renderSignalBars() {
+  const ul = $("signal-bars");
   ul.innerHTML = "";
-  for (const f of r.check.signals) {
+  for (const f of report.check.signals) {
     const li = document.createElement("li");
     const name = document.createElement("span");
     name.className = "bar-label";
@@ -275,83 +391,214 @@ function renderBrand() {
     const value = document.createElement("span");
     value.className = "bar-value";
     value.textContent = `${f.rho >= 0 ? "+" : ""}${f.rho.toFixed(2)}`;
-    value.title = f.weight ? "Used to weight recommendations" : "Not used: doesn't track results";
     li.append(name, track, value);
     ul.append(li);
   }
-  $("kpi-col").textContent = r.kpi === "roas" ? "ROAS" : "CPA";
-  $("best-note").textContent = `${r.kpi === "roas" ? "Highest ROAS" : "Lowest CPA"} among metros with at least 1% of spend`;
-  $("brand-table-title").textContent = `All ${fmt.format(metros)} metros in the results`;
-  const tbody = $("brand-rows");
-  tbody.innerHTML = "";
-  for (const m of r.metros) {
-    const tr = document.createElement("tr");
-    if (!m.trusted) tr.className = "muted";
-    const cells = [m.name + (m.best ? " ★" : ""), money.format(m.spend), m.trusted ? kpiText(r.kpi, m.kpi).split(" ")[0] : "low spend"];
-    cells.forEach((text, i) => {
-      const td = document.createElement("td");
-      td.textContent = text;
-      if (i) td.className = "num-col";
-      tr.append(td);
-    });
-    tbody.append(tr);
+}
+
+function recCard(rec, d) {
+  const k = report.kpi;
+  const li = document.createElement("li");
+  li.className = "rec";
+  li.dataset.code = rec.metro_code;
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "rec-head";
+  head.setAttribute("aria-expanded", "false");
+  const rank = document.createElement("span");
+  rank.className = "rank";
+  rank.textContent = rec.rank;
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = rec.name;
+  const status = document.createElement("span");
+  status.className = "status-tag";
+  status.textContent = d.status === "low_spend" ? `low spend (${money.format(d.spend)})` : "not running yet";
+  head.append(rank, name, status);
+
+  const summary = document.createElement("div");
+  summary.className = "rec-summary";
+  const expected = document.createElement("p");
+  expected.className = "expected";
+  if (d.expected_kpi !== null) {
+    const strong = document.createElement("strong");
+    strong.textContent = `Expected ${kpiName(k)} about ${kpiValue(k, d.expected_kpi)}`;
+    expected.append(strong, document.createTextNode(
+      ` (${kpiValue(k, d.expected_range[0])} to ${kpiValue(k, d.expected_range[1])}), from the brand's most similar markets: ${d.similar.map((m) => short(m.name)).join(", ")}.`));
+  }
+  const snap = document.createElement("p");
+  snap.className = "snapshot";
+  snap.textContent = d.snapshot;
+  summary.append(expected, snap);
+
+  const body = document.createElement("div");
+  body.className = "rec-body";
+  body.hidden = true;
+  body.append(...recDetails(rec, d));
+
+  head.addEventListener("click", () => selectRec(rec.metro_code, { toggle: true }));
+  li.append(head, summary, body);
+  return li;
+}
+
+function recDetails(rec, d) {
+  const k = report.kpi;
+  const out = [];
+  const h1 = document.createElement("h4");
+  h1.textContent = "Most similar markets the brand already runs in";
+  const sim = document.createElement("ul");
+  sim.className = "similar";
+  for (const m of d.similar) {
+    const li = document.createElement("li");
+    li.textContent = `${m.name}: ${kpiValue(k, m.kpi)} ${kpiName(k)}`;
+    sim.append(li);
+  }
+  const h2 = document.createElement("h4");
+  h2.textContent = "Local businesses vs. the typical metro";
+  const bars = document.createElement("ul");
+  bars.className = "bars";
+  const maxRatio = Math.max(2, ...rec.reasons.map((x) => x.ratio));
+  for (const x of rec.reasons) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "bar-label";
+    name.textContent = x.label;
+    const track = document.createElement("span");
+    track.className = "bar-track";
+    track.style.setProperty("--typical", `${(1 / maxRatio) * 100}%`);
+    const fill = document.createElement("span");
+    fill.className = x.ratio >= 1 ? "bar-fill up" : "bar-fill";
+    fill.style.width = `${Math.min(100, (x.ratio / maxRatio) * 100)}%`;
+    track.append(fill);
+    const value = document.createElement("span");
+    value.className = "bar-value";
+    value.textContent = `${x.ratio >= 10 ? Math.round(x.ratio) : x.ratio.toFixed(1)}x`;
+    value.title = `${x.value}% of local businesses vs ${x.typical}% in the typical metro`;
+    li.append(name, track, value);
+    bars.append(li);
+  }
+  const facts = document.createElement("p");
+  facts.className = "small muted";
+  facts.textContent = `${fmt.format(rec.population)} people (2025) · ${rec.growth_pct >= 0 ? "+" : ""}${rec.growth_pct.toFixed(1)}% since 2020 · ${fmt.format(rec.zip_count)} ZIP codes in the export · ${rec.match}% match to the best markets`;
+  const brief = document.createElement("div");
+  brief.className = "brief";
+  out.push(h1, sim, h2, bars, facts, brief);
+  return out;
+}
+
+async function loadBrief(code, box) {
+  if (box.dataset.loaded) return;
+  box.dataset.loaded = "1";
+  try {
+    const b = await getJson(`/api/briefs/${state.preset}/${code}`);
+    const h = document.createElement("h4");
+    h.textContent = "Creative brief";
+    const headline = document.createElement("p");
+    headline.className = "brief-headline";
+    headline.textContent = b.headline;
+    const audience = document.createElement("p");
+    audience.textContent = b.audience;
+    const ul = document.createElement("ul");
+    for (const item of [...b.angles, ...b.local_context]) {
+      const li = document.createElement("li");
+      li.textContent = item;
+      ul.append(li);
+    }
+    box.append(h, headline, audience, ul);
+  } catch {
+    // No pre-written brief for this metro (see "About this demo").
   }
 }
-const presetLabel = () => (presets.find((p) => p.key === state.preset) || {}).label || "Custom audience";
 
-// ---------- Accessible combobox ----------
+function selectRec(code, { toggle = false, scroll = true } = {}) {
+  const card = document.querySelector(`.rec[data-code="${code}"]`);
+  const already = state.selected === code;
+  state.selected = toggle && already ? null : code;
+  document.querySelectorAll(".rec").forEach((li) => {
+    const open = li.dataset.code === state.selected;
+    li.classList.toggle("open", open);
+    li.querySelector(".rec-head").setAttribute("aria-expanded", String(open));
+    li.querySelector(".rec-body").hidden = !open;
+  });
+  syncUrl();
+  const rec = report.recommendations.results.find((x) => x.metro_code === state.selected);
+  map.getSource("selected")?.setData(toFeatures(rec ? [rec] : []));
+  if (!rec || !card) return;
+  loadBrief(code, card.querySelector(".brief"));
+  map.fitBounds([[rec.bounds[0], rec.bounds[1]], [rec.bounds[2], rec.bounds[3]]], { padding: 80, maxZoom: 8, duration: 600 });
+  if (scroll) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
 
-// search(q) resolves to items ({key, display_name, meta}).
-function setupCombo(inputId, listId, search, onPick, noneText) {
-  const input = $(inputId);
-  const list = $(listId);
-  let items = [];
-  let active = -1;
-  let timer = null;
-  let seq = 0;
+// ---------- Adjust signals ----------
 
+function renderSignalChips() {
+  const ul = $("signal-chips");
+  ul.innerHTML = "";
+  currentSignals().forEach((key) => {
+    const li = document.createElement("li");
+    li.className = "chip";
+    const text = document.createElement("span");
+    text.textContent = key.replaceAll("_", " ");
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.setAttribute("aria-label", `Remove ${key.replaceAll("_", " ")}`);
+    x.addEventListener("click", () => {
+      const next = currentSignals().filter((s) => s !== key);
+      if (!next.length) { showError("error", "Keep at least one kind of business."); return; }
+      state.signals = next;
+      buildReport();
+    });
+    li.append(text, x);
+    ul.append(li);
+  });
+  $("signal-input").disabled = currentSignals().length >= MAX_SIGNALS;
+}
+
+function setupSignalSearch() {
+  const input = $("signal-input");
+  const list = $("signal-results");
+  let items = [], active = -1, timer = null, seq = 0;
   const close = () => {
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
     input.removeAttribute("aria-activedescendant");
     active = -1;
   };
-
   const render = () => {
     list.innerHTML = "";
     if (!items.length) {
       const li = document.createElement("li");
       li.className = "none";
-      li.textContent = noneText;
+      li.textContent = "No matching kinds of business.";
       list.append(li);
     }
     items.forEach((c, i) => {
       const li = document.createElement("li");
-      li.id = `${listId}-${i}`;
+      li.id = `signal-results-${i}`;
       li.setAttribute("role", "option");
       li.setAttribute("aria-selected", String(i === active));
       const name = document.createElement("span");
-      name.textContent = c.display_name;
+      name.textContent = c.label;
       const meta = document.createElement("span");
       meta.className = "meta";
-      meta.textContent = c.meta;
+      meta.textContent = `${fmt.format(c.n_open)} in the US`;
       li.append(name, meta);
       li.addEventListener("mousedown", (e) => { e.preventDefault(); pick(i); });
       list.append(li);
     });
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
-    if (active >= 0) input.setAttribute("aria-activedescendant", `${listId}-${active}`);
+    if (active >= 0) input.setAttribute("aria-activedescendant", `signal-results-${active}`);
   };
-
   const pick = (i) => {
-    const item = items[i];
-    if (!item) return;
+    const c = items[i];
+    if (!c) return;
     close();
     input.value = "";
-    onPick(item);
+    state.signals = [...currentSignals(), c.key].slice(0, MAX_SIGNALS);
+    buildReport();
   };
-
   input.addEventListener("input", () => {
     clearTimeout(timer);
     const q = input.value.trim();
@@ -359,122 +606,22 @@ function setupCombo(inputId, listId, search, onPick, noneText) {
     timer = setTimeout(async () => {
       const mine = ++seq;
       try {
-        const results = await search(q);
+        const results = await getJson(`/api/categories/search?q=${encodeURIComponent(q)}&limit=8`);
         if (mine !== seq) return;
-        items = results;
+        items = results.filter((c) => !currentSignals().includes(c.key));
         active = items.length ? 0 : -1;
         render();
-      } catch (err) {
-        showError(err.message);
-      }
+      } catch (err) { showError("error", err.message); }
     }, 200);
   });
-
   input.addEventListener("keydown", (e) => {
     if (list.hidden) return;
     if (e.key === "ArrowDown") { active = Math.min(active + 1, items.length - 1); render(); e.preventDefault(); }
     else if (e.key === "ArrowUp") { active = Math.max(active - 1, 0); render(); e.preventDefault(); }
     else if (e.key === "Enter") { if (active >= 0) pick(active); e.preventDefault(); }
-    else if (e.key === "Escape") { close(); }
+    else if (e.key === "Escape") close();
   });
   input.addEventListener("blur", () => setTimeout(close, 100));
-}
-
-const toMetroItem = (m) => ({
-  key: m.metro_code, display_name: m.name, kind: m.kind, bounds: m.bounds,
-  meta: `${m.kind} area · ${compact.format(m.population)} people`,
-});
-const searchMetros = async (q) =>
-  (await getJson(`/api/metros/search?q=${encodeURIComponent(q)}&limit=8`))
-    .map(toMetroItem).filter((m) => !state.seeds.some((s) => s.key === m.key));
-const searchCategories = async (q) =>
-  (await getJson(`/api/categories/search?q=${encodeURIComponent(q)}&limit=8`))
-    .filter((c) => !state.signals.includes(c.key))
-    .map((c) => ({ key: c.key, display_name: c.label, meta: `${fmt.format(c.n_open)} open in the US` }));
-
-// ---------- Step 1: audience ----------
-
-function renderPresets() {
-  const box = $("presets");
-  box.innerHTML = "";
-  for (const p of presets) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "preset";
-    b.setAttribute("role", "radio");
-    b.setAttribute("aria-checked", String(state.preset === p.key));
-    b.dataset.key = p.key;
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = p.label;
-    const ex = document.createElement("span");
-    ex.className = "example";
-    ex.textContent = `e.g. ${p.example}`;
-    b.append(name, ex);
-    b.addEventListener("click", () => pickPreset(p.key));
-    box.append(b);
-  }
-}
-
-function pickPreset(key) {
-  const p = presets.find((x) => x.key === key);
-  if (!p) return;
-  state.preset = key;
-  state.signals = [...p.categories];
-  state.selected = null;
-  update();
-}
-
-function renderSignals() {
-  $("signals-block").hidden = !state.preset;
-  const ul = $("signal-chips");
-  ul.innerHTML = "";
-  state.signals.forEach((key, i) => {
-    const li = document.createElement("li");
-    li.className = "chip";
-    const text = document.createElement("span");
-    text.textContent = label(key);
-    const x = document.createElement("button");
-    x.type = "button";
-    x.textContent = "×";
-    x.setAttribute("aria-label", `Remove ${label(key)}`);
-    x.addEventListener("click", () => {
-      state.signals.splice(i, 1);
-      state.preset = "custom";
-      update();
-      $("signal-input").focus();
-    });
-    li.append(text, x);
-    ul.append(li);
-  });
-  $("signal-input").disabled = state.signals.length >= MAX_SIGNALS;
-  $("growth").checked = state.growth;
-}
-
-// ---------- Step 2: seeds ----------
-
-function renderSeeds() {
-  const ul = $("seed-chips");
-  ul.innerHTML = "";
-  state.seeds.forEach((s, i) => {
-    const li = document.createElement("li");
-    li.className = "chip seed";
-    const text = document.createElement("span");
-    text.textContent = s.display_name;
-    const x = document.createElement("button");
-    x.type = "button";
-    x.textContent = "×";
-    x.setAttribute("aria-label", `Remove ${s.display_name}`);
-    x.addEventListener("click", () => {
-      state.seeds.splice(i, 1);
-      update({ fit: true });
-      $("seed-input").focus();
-    });
-    li.append(text, x);
-    ul.append(li);
-  });
-  ul.hidden = state.seeds.length === 0;
-  $("seed-combo").hidden = state.seeds.length >= MAX_SEEDS;
 }
 
 // ---------- Theme ----------
@@ -497,9 +644,9 @@ const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyV
 function themeLayerPaint() {
   const accent = cssVar("--accent"), own = cssVar("--own"), panel = cssVar("--panel"), text = cssVar("--text");
   return {
+    "current-circle": { "circle-color": panel, "circle-stroke-color": cssVar("--skip") },
     "results-circle": { "circle-color": accent, "circle-stroke-color": panel },
     "seeds-circle": { "circle-color": own, "circle-stroke-color": panel },
-    "current-circle": { "circle-color": panel, "circle-stroke-color": cssVar("--skip") },
     "selected-ring": { "circle-stroke-color": text },
   };
 }
@@ -545,7 +692,6 @@ function toggleTheme() {
   applyMapTheme();
 }
 
-// Following the system (no saved choice): track it live.
 darkQuery.addEventListener("change", () => {
   if (document.documentElement.dataset.theme) return;
   renderThemeToggle();
@@ -565,321 +711,79 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 const mapReady = new Promise((resolve) => map.on("load", resolve));
 
-function toFeatures(rows, extra = {}) {
+function toFeatures(rows) {
   return {
     type: "FeatureCollection",
     features: rows.map((r) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: r.center },
-      properties: { metro_code: r.metro_code, name: r.name, rank: r.rank, population: r.population, ...extra },
+      properties: { metro_code: r.metro_code, name: r.name, population: r.population || 400000 },
     })),
   };
 }
 
-// Circle area grows with population (radius ~ sqrt), readable from 50k to 20M people.
+// Circle area grows with population (radius ~ sqrt).
 const sizeByPopulation = ["interpolate", ["linear"], ["sqrt", ["get", "population"]], 200, 4, 1500, 11, 4500, 22];
 
 async function setupLayers() {
   await mapReady;
   const empty = { type: "FeatureCollection", features: [] };
   for (const id of OUR_SOURCES) map.addSource(id, { type: "geojson", data: empty });
-  map.addLayer({
-    id: "current-circle", type: "circle", source: "current",
-    paint: {
-      "circle-radius": ["*", sizeByPopulation, 0.6], "circle-color": "#ffffff", "circle-opacity": 0.9,
-      "circle-stroke-color": "#9aa0a6", "circle-stroke-width": 1.5,
-    },
-  });
-  map.addLayer({
-    id: "results-circle", type: "circle", source: "results",
-    paint: {
-      "circle-radius": sizeByPopulation, "circle-color": "#e4572e", "circle-opacity": 0.75,
-      "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2,
-    },
-  });
-  map.addLayer({
-    id: "seeds-circle", type: "circle", source: "seeds",
-    paint: {
-      "circle-radius": sizeByPopulation, "circle-color": "#2e6fe4", "circle-opacity": 0.75,
-      "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2,
-    },
-  });
-  map.addLayer({
-    id: "selected-ring", type: "circle", source: "selected",
-    paint: {
-      "circle-radius": ["+", sizeByPopulation, 4], "circle-color": "rgba(0,0,0,0)",
-      "circle-stroke-color": "#1d1d1f", "circle-stroke-width": 2.5,
-    },
-  });
+  map.addLayer({ id: "current-circle", type: "circle", source: "current",
+    paint: { "circle-radius": 6, "circle-color": "#ffffff", "circle-opacity": 0.9, "circle-stroke-color": "#9aa0a6", "circle-stroke-width": 1.5 } });
+  map.addLayer({ id: "seeds-circle", type: "circle", source: "seeds",
+    paint: { "circle-radius": 8, "circle-color": "#2e6fe4", "circle-opacity": 0.85, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 } });
+  map.addLayer({ id: "results-circle", type: "circle", source: "results",
+    paint: { "circle-radius": sizeByPopulation, "circle-color": "#e4572e", "circle-opacity": 0.8, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 } });
+  map.addLayer({ id: "selected-ring", type: "circle", source: "selected",
+    paint: { "circle-radius": ["+", sizeByPopulation, 4], "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#1d1d1f", "circle-stroke-width": 2.5 } });
   applyLayerTheme();
-  for (const layer of ["results-circle", "seeds-circle"]) {
-    map.on("click", layer, (e) => selectMetro(e.features[0].properties.metro_code, { fly: false }));
-    map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
-    map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
+  map.on("click", "results-circle", (e) => {
+    const code = e.features[0].properties.metro_code;
+    if (!state.showAll && !document.querySelector(`.rec[data-code="${code}"]`)) { state.showAll = true; renderReport(); }
+    selectRec(code);
+  });
+  for (const layer of ["results-circle", "seeds-circle", "current-circle"]) {
+    map.on("mouseenter", layer, (e) => {
+      map.getCanvas().style.cursor = "pointer";
+      popup.setLngLat(e.features[0].geometry.coordinates).setText(e.features[0].properties.name).addTo(map);
+    });
+    map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; popup.remove(); });
   }
+}
+const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10 });
+
+async function drawMap({ fit = false } = {}) {
+  await mapReady;
+  const recs = report.recommendations.results;
+  const best = report.metros.filter((m) => m.best);
+  const current = report.metros.filter((m) => !m.best);
+  map.getSource("results").setData(toFeatures(recs));
+  map.getSource("seeds").setData(toFeatures(best));
+  map.getSource("current").setData(toFeatures(current));
+  if (fit) {
+    const bounds = new maplibregl.LngLatBounds();
+    [...recs, ...best].forEach((r) => bounds.extend(r.center));
+    map.fitBounds(bounds, { padding: 60, maxZoom: 6, duration: 600 });
+  }
+}
+
+async function clearMap() {
+  await mapReady;
+  for (const id of OUR_SOURCES) map.getSource(id).setData(toFeatures([]));
 }
 
 const LAYER_GROUPS = { results: ["results-circle"], seeds: ["seeds-circle"], current: ["current-circle"] };
 
-function setLayerVisible(group, visible) {
-  for (const id of LAYER_GROUPS[group]) map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
-}
-
-function fitTo(rows) {
-  if (!rows.length) return;
-  const bounds = new maplibregl.LngLatBounds();
-  rows.forEach((r) => bounds.extend(r.center));
-  map.fitBounds(bounds, { padding: 70, maxZoom: 7, duration: 600 });
-}
-
-// ---------- Results ----------
-
-function showError(message) {
-  const el = $("error");
-  el.textContent = message || "";
-  el.hidden = !message;
-}
-
-const ratioText = (r) => `${r.ratio >= 10 ? Math.round(r.ratio) : r.ratio.toFixed(1)}×`;
-
-function renderResults(result) {
-  const ol = $("results");
-  ol.innerHTML = "";
-  for (const r of result.results) {
-    const li = document.createElement("li");
-    li.tabIndex = 0;
-    li.dataset.code = r.metro_code;
-    li.setAttribute("aria-current", String(state.selected === r.metro_code));
-    const head = document.createElement("div");
-    head.className = "row-head";
-    const rank = document.createElement("span");
-    rank.className = "rank";
-    rank.textContent = r.rank;
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = r.name;
-    head.append(rank, name);
-    if (r.match !== null) {
-      const match = document.createElement("span");
-      match.className = "match";
-      match.textContent = `${r.match}% match`;
-      head.append(match);
-    }
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = `${compact.format(r.population)} people · ${r.growth_pct >= 0 ? "+" : ""}${r.growth_pct.toFixed(1)}% since 2020`;
-    const reasons = document.createElement("div");
-    reasons.className = "reasons";
-    for (const x of r.reasons.slice(0, 3)) {
-      const tag = document.createElement("span");
-      tag.className = x.ratio >= 1 ? "reason up" : "reason";
-      tag.textContent = `${x.label} ${ratioText(x)}`;
-      reasons.append(tag);
-    }
-    const status = brandStatus(r.metro_code);
-    if (status) {
-      const tag = document.createElement("span");
-      tag.className = "status-tag";
-      tag.textContent = status;
-      head.append(tag);
-    }
-    li.append(head, meta, reasons);
-    const go = () => selectMetro(r.metro_code);
-    li.addEventListener("click", go);
-    li.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
-    ol.append(li);
-  }
-  $("results-title").textContent = lastBrand ? "Recommended next markets"
-    : result.mode === "lookalike" ? "Closest to your best markets" : "Strongest signals";
-  $("results-section").hidden = result.results.length === 0;
-}
-
-function brandStatus(code) {
-  if (!lastBrand) return null;
-  const s = lastBrand.status.find((x) => x.metro_code === code);
-  if (!s) return null;
-  return s.status === "low_spend" ? `low spend (${money.format(s.spend)})` : "not running yet";
-}
-
-function findMetro(code) {
-  if (!lastResult) return null;
-  return lastResult.results.find((r) => r.metro_code === code)
-    || lastResult.seeds.find((r) => r.metro_code === code) || null;
-}
-
-async function selectMetro(code, { fly = true } = {}) {
-  const r = findMetro(code);
-  state.selected = r ? code : null;
-  syncUrl();
-  document.querySelectorAll("#results li").forEach((li) =>
-    li.setAttribute("aria-current", String(li.dataset.code === state.selected)));
-  map.getSource("selected")?.setData(toFeatures(r ? [r] : []));
-  const panel = $("detail");
-  if (!r) { panel.hidden = true; return; }
-  const isSeed = lastResult.seeds.some((s) => s.metro_code === code);
-  const brandMetro = lastBrand && lastBrand.metros.find((m) => m.metro_code === code);
-  $("detail-rank").textContent = isSeed ? "One of your best markets"
-    : lastResult.mode === "lookalike" ? `#${r.rank} · ${r.match}% match to your best markets` : `#${r.rank} by signal strength`;
-  $("detail-title").textContent = r.name;
-  $("detail-meta").textContent = `${r.kind === "metro" ? "Metropolitan" : "Micropolitan"} area · ${fmt.format(r.population)} people (2025) · ${r.growth_pct >= 0 ? "+" : ""}${r.growth_pct.toFixed(1)}% since 2020 · ${fmt.format(r.zip_count)} ZIP codes`
-    + (brandMetro ? ` · brand: ${money.format(brandMetro.spend)} spend, ${kpiText(lastBrand.kpi, brandMetro.kpi)}` : brandStatus(code) ? ` · brand: ${brandStatus(code)}` : "");
-  renderBars(r);
-  panel.hidden = false;
-  if (fly) map.fitBounds([[r.bounds[0], r.bounds[1]], [r.bounds[2], r.bounds[3]]], { padding: 80, maxZoom: 9, duration: 600 });
-  await renderBrief(r);
-}
-
-// Each signal as a bar against the typical metro (the 1× line).
-function renderBars(r) {
-  const ul = $("detail-signals");
-  ul.innerHTML = "";
-  const maxRatio = Math.max(2, ...r.reasons.map((x) => x.ratio));
-  for (const x of r.reasons) {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.className = "bar-label";
-    name.textContent = x.label;
-    const track = document.createElement("span");
-    track.className = "bar-track";
-    track.style.setProperty("--typical", `${(1 / maxRatio) * 100}%`);
-    const fill = document.createElement("span");
-    fill.className = x.ratio >= 1 ? "bar-fill up" : "bar-fill";
-    fill.style.width = `${Math.min(100, (x.ratio / maxRatio) * 100)}%`;
-    track.append(fill);
-    const value = document.createElement("span");
-    value.className = "bar-value";
-    value.textContent = ratioText(x);
-    value.title = x.signal === "population_growth"
-      ? `${x.value}% vs ${x.typical}% typical`
-      : `${x.value}% of local businesses vs ${x.typical}% typical`;
-    li.append(name, track, value);
-    ul.append(li);
-  }
-}
-
-async function renderBrief(r) {
-  const box = $("detail-brief");
-  box.innerHTML = "";
-  const preset = presets.find((p) => p.key === state.preset);
-  if (!preset || !preset.has_briefs) return;
-  const heading = document.createElement("h3");
-  heading.textContent = "Creative brief";
-  box.append(heading);
-  let brief = null;
-  try {
-    brief = await getJson(`/api/briefs/${preset.key}/${r.metro_code}`);
-  } catch { /* none for this metro */ }
-  if (state.selected !== r.metro_code) return;  // another metro was picked meanwhile
-  if (!brief) {
-    const p = document.createElement("p");
-    p.className = "muted";
-    p.textContent = "No brief for this metro in the demo. Briefs are pre-written for each preset's top markets, so the live site never calls an AI model; a production setup would write one on demand.";
-    box.append(p);
-    return;
-  }
-  const headline = document.createElement("p");
-  headline.className = "brief-headline";
-  headline.textContent = brief.headline;
-  const audience = document.createElement("p");
-  audience.textContent = brief.audience;
-  box.append(headline, audience);
-  for (const [title, items] of [["Angles", brief.angles], ["Local context", brief.local_context], ["Based on", brief.grounded_in]]) {
-    const h = document.createElement("h4");
-    h.textContent = title;
-    const ul = document.createElement("ul");
-    for (const item of items) {
-      const li = document.createElement("li");
-      li.textContent = item;
-      ul.append(li);
-    }
-    box.append(h, ul);
-  }
-}
-
-async function refresh({ fit = false } = {}) {
-  syncUrl();
-  showError("");
-  const ready = hasSignals();
-  $("empty-state").hidden = ready;
-  document.querySelector('.legend [data-layer="seeds"]').hidden = state.seeds.length === 0 && !state.brand;
-  if (!ready) {
-    lastResult = null;
-    $("summary").hidden = true;
-    $("export").hidden = true;
-    $("results-section").hidden = true;
-    $("detail").hidden = true;
-    await mapReady;
-    for (const id of OUR_SOURCES) map.getSource(id).setData(toFeatures([]));
-    if (state.brand) showError("Pick an audience in step 1 to analyze these results.");
-    else if (state.preset === "custom") showError("Add at least one signal, or use population growth.");
-    return;
-  }
-
-  const mine = ++requestSeq;
-  $("loading").hidden = false;
-  try {
-    let result;
-    if (state.brand) {
-      const brand = await postJson("/api/performance", performanceRequest());
-      if (mine !== requestSeq) return;
-      lastBrand = brand;
-      result = brand.recommendations;
-    } else {
-      result = await postJson("/api/markets", marketRequest());
-      if (mine !== requestSeq) return;
-      lastBrand = null;
-    }
-    lastResult = result;
-    renderBrand();
-    await mapReady;
-    map.getSource("results").setData(toFeatures(result.results));
-    map.getSource("seeds").setData(toFeatures(result.seeds));
-    const current = lastBrand ? lastBrand.metros.filter((m) => !m.best)
-      .map((m) => ({ ...m, population: 400000, rank: 0 })) : [];
-    map.getSource("current").setData(toFeatures(current));
-    document.querySelector('.legend [data-layer="current"]').hidden = current.length === 0;
-
-    $("n-results").textContent = fmt.format(result.results.length);
-    $("summary-unit").textContent = lastBrand ? "recommended metros" : result.mode === "lookalike" ? "lookalike metros" : "top metros";
-    const seedNames = result.seeds.map((s) => s.name.split(",")[0].split("-")[0]);
-    const detail = [`${presetLabel()}, ${result.signals.length} signals`];
-    if (lastBrand) detail.splice(0, 1, `${state.brand.name}: lookalikes of its ${seedNames.length} best markets, where it isn't spending yet`);
-    else detail.push(result.mode === "lookalike"
-      ? `closest to ${seedNames.length <= 2 ? seedNames.join(" and ") : `${seedNames.length} best markets`}`
-      : "ranked by signal strength");
-    detail.push(`out of ${fmt.format(result.universe)} metros with ${compact.format(state.minPopulation)}+ people`);
-    $("summary-detail").textContent = detail.join(" · ");
-    $("summary").hidden = false;
-    $("export").hidden = result.results.length === 0;
-    renderResults(result);
-    if (fit) fitTo([...result.results, ...result.seeds]);
-    if (state.selected && findMetro(state.selected)) await selectMetro(state.selected, { fly: false });
-    else { state.selected = null; $("detail").hidden = true; map.getSource("selected").setData(toFeatures([])); }
-  } catch (err) {
-    if (mine !== requestSeq) return;
-    lastResult = null;
-    lastBrand = null;
-    renderBrand();
-    $("summary").hidden = true;
-    $("export").hidden = true;
-    $("results-section").hidden = true;
-    $("detail").hidden = true;
-    showError(err.message);
-  } finally {
-    if (mine === requestSeq) $("loading").hidden = true;
-  }
-}
-
-// ---------- Export ----------
+// ---------- Export and print ----------
 
 async function exportCsv(format, button) {
-  if (!hasSignals()) return;
+  if (!state.brand) return;
   button.disabled = true;
-  showError("");
+  showError("error", "");
   try {
-    const [path, body] = state.brand ? ["/api/performance/export", performanceRequest()] : ["/api/markets/export", marketRequest()];
-    const resp = await api(`${path}?format=${format}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+    const resp = await api(`/api/performance/export?format=${format}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(reportRequest()),
     });
     const blob = await resp.blob();
     const match = /filename="([^"]+)"/.exec(resp.headers.get("Content-Disposition") || "");
@@ -891,113 +795,90 @@ async function exportCsv(format, button) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   } catch (err) {
-    showError(err.message);
+    showError("error", err.message);
   } finally {
     button.disabled = false;
   }
 }
 
+// Print shows every recommendation with its details.
+window.addEventListener("beforeprint", () => {
+  if (!report) return;
+  state.showAll = true;
+  renderReport();
+  document.querySelectorAll(".rec").forEach((li) => {
+    li.querySelector(".rec-body").hidden = false;
+    loadBrief(li.dataset.code, li.querySelector(".brief"));
+  });
+  document.querySelectorAll("details").forEach((d) => { d.open = true; });
+});
+
 // ---------- URL state ----------
 
 function syncUrl() {
   const p = new URLSearchParams();
-  if (state.preset && state.preset !== "custom") p.set("preset", state.preset);
-  if (state.preset === "custom") for (const s of state.signals) p.append("signal", s);
-  if (state.growth) p.set("growth", "1");
-  for (const s of state.seeds) p.append("seed", s.key);
-  if (state.minPopulation !== 250000) p.set("minpop", String(state.minPopulation));
-  if (state.micro) p.set("micro", "1");
-  if (state.brand?.sampleKey) p.set("sample", state.brand.sampleKey);
-  if (state.selected) p.set("metro", state.selected);
+  if (state.brand?.sampleKey) {
+    p.set("sample", state.brand.sampleKey);
+    if (state.selected) p.set("metro", state.selected);
+  }
   const qs = p.toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
 }
 
-async function restoreFromUrl() {
-  const p = new URLSearchParams(location.search);
-  const preset = presets.find((x) => x.key === p.get("preset"));
-  const signals = [...new Set(p.getAll("signal"))].filter((s) => /^[a-z0-9_]+$/.test(s)).slice(0, MAX_SIGNALS);
-  if (signals.length) { state.preset = "custom"; state.signals = signals; }
-  else if (preset) { state.preset = preset.key; state.signals = [...preset.categories]; }
-  state.growth = p.get("growth") === "1";
-  if (state.growth && !state.preset) state.preset = "custom";
-  const minpop = Number(p.get("minpop"));
-  if ([100000, 250000, 500000, 1000000].includes(minpop)) state.minPopulation = minpop;
-  state.micro = p.get("micro") === "1";
-  const codes = [...new Set(p.getAll("seed"))].filter((c) => /^[0-9]{5}$/.test(c)).slice(0, MAX_SEEDS);
-  const seeds = await Promise.all(codes.map((c) => getJson(`/api/metros/${c}`).then(toMetroItem).catch(() => null)));
-  state.seeds = seeds.filter(Boolean);
-  const metro = p.get("metro");
-  state.selected = metro && /^[0-9]{5}$/.test(metro) ? metro : null;
-  const sampleKey = p.get("sample");
-  if (sampleKey && samples.some((x) => x.key === sampleKey)) {
-    try {
-      const sample = await getJson(`/api/samples/${sampleKey}`);
-      state.brand = { name: sample.name, synthetic: true, sampleKey, fileName: null,
-                      rows: sample.rows, geo_type: sample.geo_type, kpi: sample.kpi };
-      // A bare ?sample= link uses the sample's own audience.
-      const preset = presets.find((x) => x.key === sample.preset);
-      if (!state.preset && preset) { state.preset = preset.key; state.signals = [...preset.categories]; }
-    } catch (err) { showError(err.message); }
-  }
-  $("min-pop").value = String(state.minPopulation);
-  $("micro").checked = state.micro;
+// ---------- About dialog ----------
+
+function setupAbout() {
+  const dialog = $("about");
+  $("about-open").addEventListener("click", () => dialog.showModal());
+  dialog.addEventListener("close", () => {
+    try { localStorage.setItem("turf-about-seen", "1"); } catch { /* shown again next time */ }
+  });
+  let seen = false;
+  try { seen = localStorage.getItem("turf-about-seen") === "1"; } catch { /* not available */ }
+  if (!seen) dialog.showModal();
 }
 
 // ---------- Wiring ----------
 
-function renderControls() {
-  renderPresets();
-  renderSignals();
-  renderSeeds();
-  renderSampleButtons();
-  renderBrand();
-}
-
-async function update(opts = { fit: true }) {
-  renderControls();
-  await refresh(opts);
-}
-
 function init() {
-  setupCombo("signal-input", "signal-results", searchCategories, (c) => {
-    state.signals = [...state.signals, c.key].slice(0, MAX_SIGNALS);
-    state.preset = "custom";
-    update({ fit: true });
-  }, "No categories found. Try a shorter word.");
-  setupCombo("seed-input", "seed-results", searchMetros, (m) => {
-    state.seeds = [...state.seeds, m].slice(0, MAX_SEEDS);
-    update({ fit: true });
-  }, "No metro areas found. Try a city name.");
-  $("growth").addEventListener("change", (e) => {
-    state.growth = e.target.checked;
-    if (!state.preset) state.preset = "custom";
-    update({ fit: true });
-  });
-  $("min-pop").addEventListener("change", (e) => { state.minPopulation = Number(e.target.value); update({ fit: true }); });
-  $("micro").addEventListener("change", (e) => { state.micro = e.target.checked; update({ fit: true }); });
-  $("detail-close").addEventListener("click", () => selectMetro(null));
-  $("results-file").addEventListener("change", (e) => onResultsFile(e.target.files[0]));
-  $("brand-clear").addEventListener("click", clearBrand);
-  $("sample-csv").addEventListener("click", downloadBrandCsv);
+  $("results-file").addEventListener("change", (e) => onFile(e.target.files[0]));
+  $("example-csv").addEventListener("click", downloadExample);
+  $("build-report").addEventListener("click", buildFromUpload);
+  $("change-brand").addEventListener("click", changeBrand);
+  $("more-recs").addEventListener("click", () => { state.showAll = !state.showAll; renderReport(); });
+  $("print-report").addEventListener("click", () => window.print());
+  document.querySelectorAll(".actionbar button[data-format]").forEach((b) =>
+    b.addEventListener("click", () => exportCsv(b.dataset.format, b)));
   document.querySelectorAll(".legend button").forEach((b) => b.addEventListener("click", () => {
     const on = b.getAttribute("aria-pressed") !== "true";
     b.setAttribute("aria-pressed", String(on));
-    setLayerVisible(b.dataset.layer, on);
+    for (const id of LAYER_GROUPS[b.dataset.layer]) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
   }));
-  document.querySelectorAll(".export button[data-format]").forEach((b) =>
-    b.addEventListener("click", () => exportCsv(b.dataset.format, b)));
+  setupSignalSearch();
   renderThemeToggle();
   $("theme-toggle").addEventListener("click", toggleTheme);
-  getJson("/api/meta").then((m) => { $("release").textContent = m.release; }).catch(() => {});
+  setupAbout();
+  getJson("/api/meta").then((m) => {
+    $("release").textContent = m.release;
+    $("about-release").textContent = m.release;
+  }).catch(() => {});
 }
 
 init();
 try {
   [presets, samples] = await Promise.all([getJson("/api/presets"), getJson("/api/samples")]);
 } catch (err) {
-  showError(err.message);
+  showError("start-error", err.message);
 }
+renderStart();
 await setupLayers();
-await restoreFromUrl();
-await update({ fit: true });
+const params = new URLSearchParams(location.search);
+const sampleKey = params.get("sample");
+if (sampleKey && samples.some((s) => s.key === sampleKey)) {
+  const metro = params.get("metro");
+  await openSample(sampleKey);
+  if (metro && /^[0-9]{5}$/.test(metro) && report) {
+    if (!report.recommendations.results.slice(0, TOP_RECS).some((r) => r.metro_code === metro)) { state.showAll = true; renderReport(); }
+    selectRec(metro, { scroll: false });
+  }
+}

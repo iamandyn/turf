@@ -3,8 +3,9 @@
 Fails on any console error, page error, CSP violation, or accessibility
 violation (axe-core), and walks the main flow: pick a competitor, add a second
 one, add your own chain (only near it, then skip near it), check the results,
-export both CSV formats, reload from the shareable URL, open an old-style link, pick a metro area,
-upload a store list, and toggle map layers. Saves screenshots.
+export both CSV formats, reload from the shareable URL, open an old-style link,
+upload a store list, toggle map layers, pick a metro area, combine areas, and
+switch to dark mode. Saves screenshots.
 
 Usage:
     uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000
@@ -35,7 +36,7 @@ def main() -> None:
     parser.add_argument("--chain", default="orangetheory fitness")
     parser.add_argument("--chain2", default="Anytime Fitness", help="second competitor")
     parser.add_argument("--own", default="Planet Fitness", help="text typed into your chain box")
-    parser.add_argument("--state", default="TX")
+    parser.add_argument("--state", default="TX", help="text typed into the Where field")
     parser.add_argument("--metro", default="Austin", help="text typed into the metro box")
     args = parser.parse_args()
     out = Path(args.out)
@@ -68,7 +69,7 @@ def main() -> None:
         print(f"search picked: {first.splitlines()[0]}")
 
         # 2. Narrow to a state, widen the radius.
-        page.select_option("#state-select", args.state)
+        area(page, args.state)
         page.locator("#radius").fill("3")
         wait_idle(page)
         n_one = count(page)
@@ -180,7 +181,7 @@ def main() -> None:
         cat.wait_for_selector("#error:not([hidden])", timeout=15_000)
         msg = cat.inner_text("#error")
         check("Pick a state" in msg, f"broad category asks for a state: {msg[:70]}", problems)
-        cat.select_option("#state-select", args.state)
+        area(cat, args.state)
         cat.wait_for_selector("#summary:not([hidden])", timeout=15_000)
         wait_idle(cat)
         n_cat = int(cat.inner_text("#n-targets").replace(",", ""))
@@ -198,11 +199,12 @@ def main() -> None:
         metro.wait_for_selector("#summary:not([hidden])", timeout=15_000)
         wait_idle(metro)
         n_us = count(metro)
-        metro.fill("#metro-input", args.metro)
-        metro.wait_for_selector("#metro-results li[role=option]", timeout=10_000)
-        metro.keyboard.press("Enter")
-        metro.wait_for_selector("#metro-selected:not([hidden])")
-        wait_idle(metro)
+        # Focusing the empty field lists the states, like a dropdown.
+        metro.click("#area-input")
+        n_options = metro.locator("#area-results li[role=option]").count()
+        check(n_options == 51, f"empty area field suggests all states: {n_options}", problems)
+        metro.keyboard.press("Escape")
+        area(metro, args.metro)
         n_metro, detail = count(metro), metro.inner_text("#summary-detail")
         check(
             0 < n_metro < n_us and args.metro.lower() in detail.lower() and "metro=" in metro.url,
@@ -211,6 +213,28 @@ def main() -> None:
         )
         metro.wait_for_timeout(1000)  # let the map finish zooming to the metro
         metro.screenshot(path=str(out / "06-metro.png"))
+
+        # 6c. Areas combine as a union: the metro plus a whole state.
+        area(metro, args.state)
+        n_union = count(metro)
+        check(
+            n_union > n_metro and "state=" in metro.url and "metro=" in metro.url,
+            f"{args.metro} metro + {args.state}: {n_union}",
+            problems,
+        )
+
+        # 6d. Dark mode: toggle, accessible, and remembered across reloads.
+        metro.click("#theme-toggle")
+        metro.wait_for_timeout(1500)  # basemap swap
+        theme = metro.evaluate("document.documentElement.dataset.theme")
+        check(theme == "dark", f"dark mode toggle: {theme}", problems)
+        metro.screenshot(path=str(out / "07-dark.png"))
+        check_a11y(metro, "dark mode", problems)
+        metro.reload(wait_until="networkidle")
+        wait_idle(metro)
+        theme = metro.evaluate("document.documentElement.dataset.theme")
+        pressed = metro.get_attribute("#theme-toggle", "aria-pressed")
+        check(theme == "dark" and pressed == "true", "dark mode kept after reload", problems)
 
         # 7. Phone layout.
         phone = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True)
@@ -229,6 +253,18 @@ def main() -> None:
             print(f"  - {p}")
         sys.exit(1)
     print("all checks passed")
+
+
+def area(page: Page, text: str) -> None:
+    """Type into the Where field and pick the first suggestion."""
+    chips = page.locator("#area-selected li").count()
+    page.fill("#area-input", text)
+    # Wait for the typed search's results (they highlight the first option),
+    # not the state list that focusing the empty field shows.
+    page.wait_for_selector("#area-results li[aria-selected=true]", timeout=10_000)
+    page.keyboard.press("Enter")
+    page.wait_for_function(f"document.querySelectorAll('#area-selected li').length === {chips + 1}")
+    wait_idle(page)
 
 
 def count(page: Page) -> int:

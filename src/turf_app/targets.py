@@ -93,7 +93,7 @@ class TargetRequest(BaseModel):
     metros: list[MetroCode] | None = Field(
         default=None,
         max_length=MAX_METROS,
-        description="Census metro/micro area codes (CBSA), e.g. 12420; combine with states",
+        description="Census metro/micro area codes (CBSA), e.g. 12420; with states, either matches",
     )
     own_chain_key: str | None = Field(default=None, description="Your own chain in Overture")
     own_locations: list[OwnLocation] | None = Field(
@@ -255,8 +255,13 @@ _CANDIDATE_FILTER = """
     ($chains IS NULL OR list_contains($chains, chain_key))
     AND ($category IS NULL OR category = $category)
     AND ($unverified OR status = 'open')
-    AND ($states IS NULL OR list_contains($states, state))
-    AND ($metros IS NULL OR list_contains($metros, metro))
+    -- Areas are a union: in any chosen state OR any chosen metro area, so
+    -- "Texas + Oklahoma City metro" covers both. No areas means the whole US.
+    AND (
+        ($states IS NULL AND $metros IS NULL)
+        OR coalesce(list_contains($states, state), false)
+        OR coalesce(list_contains($metros, metro), false)
+    )
     AND ($own IS NULL OR chain_key IS DISTINCT FROM $own)
 """
 

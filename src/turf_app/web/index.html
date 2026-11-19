@@ -3,8 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Turf · Geo-conquesting target lists</title>
   <meta name="description" content="Pick a competitor, get an ad-ready list of target areas around their locations, built from open Overture Maps data.">
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/vendor/maplibre-gl-4.7.1/maplibre-gl.css">
   <link rel="stylesheet" href="/styles.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e4572e' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23e4572e'/%3E%3C/svg%3E">
@@ -14,6 +16,10 @@
     <aside class="panel" aria-label="Target list builder">
       <header class="brand">
         <h1><span class="logo" aria-hidden="true"></span>Turf</h1>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false" aria-label="Dark mode" title="Dark mode">
+          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        </button>
         <p class="tagline">Target ads around a competitor's locations.</p>
       </header>
 
@@ -39,21 +45,17 @@
 
       <section class="step" aria-labelledby="step2-title">
         <h2 id="step2-title"><span class="num">2</span> Where and how wide</h2>
-        <label class="field">
-          <span>State</span>
-          <select id="state-select"><option value="">All states</option></select>
-        </label>
         <div class="field">
-          <span id="metro-label">Or a metro area</span>
-          <div class="combo" id="metro-combo">
-            <input id="metro-input" type="search" autocomplete="off" spellcheck="false"
-                   placeholder="e.g. Austin, Dallas-Fort Worth"
+          <span id="area-label">Where</span>
+          <ul class="chips" id="area-selected" aria-label="Chosen areas" hidden></ul>
+          <div class="combo" id="area-combo">
+            <input id="area-input" type="search" autocomplete="off" spellcheck="false"
+                   placeholder="All of the US. Type a state or metro area"
                    role="combobox" aria-expanded="false" aria-autocomplete="list"
-                   aria-controls="metro-results" aria-labelledby="metro-label">
-            <ul id="metro-results" class="combo-list" role="listbox" hidden></ul>
+                   aria-controls="area-results" aria-labelledby="area-label">
+            <ul id="area-results" class="combo-list" role="listbox" hidden></ul>
           </div>
-          <div class="selected area" id="metro-selected" hidden></div>
-          <small>Census metro and micro areas; they can cross state lines.</small>
+          <small>States and Census metro areas (which can cross state lines). Pick several to combine them.</small>
         </div>
         <label class="field">
           <span>Ad radius around each location <output id="radius-out" for="radius">1 mi</output></span>

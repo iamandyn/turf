@@ -55,7 +55,7 @@ turf/
 | **Chain aliases** (e.g. merge "Exxon" into "ExxonMobil") | `CHAIN_ALIASES` in `normalize.py` | | `test_normalize.py::test_chain_key` |
 | **Which brands count as chains** (trust thresholds, kiosk exclusions) | `ChainRules`, `EXCLUDED_CHAINS` in `chains.py` | | `tests/test_chains.py` |
 | **Duplicate detection** | `chains.py` step 5, `street_key` in `normalize.py` | `ChainRules.dup_*` | `test_chains.py`, `test_normalize.py::test_street_key_*` |
-| **Metro areas** (Census CBSAs: boundaries, tagging, search, filter) | `scripts/extract_metros.py` (pinned URL + SHA-256), metro tagging in `serving.py` | `metros` filter in `targets.py`; `search_metros`, `get_metro` in `api.py`; `pickMetro`, `searchMetros` in `web/app.js` | `test_targets.py::test_metro_*`, `test_api.py::test_metro*`; fixture boxes in `conftest.py` |
+| **Metro areas** (Census CBSAs: boundaries, tagging, search, filter) | `scripts/extract_metros.py` (pinned URL + SHA-256), metro tagging in `serving.py` | `metros` filter in `targets.py`; `search_metros`, `get_metro` in `api.py`; the Where field (`searchAreas`, `addArea`, `renderAreas`) in `web/app.js` | `test_targets.py::test_metro_*`, `test_api.py::test_metro*`; fixture boxes in `conftest.py` |
 | **State cleanup / fill** | `normalize_state` (`normalize.py`), `states.py` | `scripts/extract_states.py` | `test_states.py`, `test_normalize.py` |
 | **Serving DB schema** | `serving.py` | every SQL query in `api.py` and `targets.py`; bump `SCHEMA_VERSION` | `tests/conftest.py` builds it |
 | **Search** (chains + categories, ranking, typos, any-word fallback) | `search` in `api.py` (`_SEARCH_CANDIDATES`); `search_chains` for chains only | `FUZZY_MIN_SIMILARITY` | `test_api.py::test_search_*`, `test_unified_search_*` |
@@ -68,6 +68,7 @@ turf/
 | **Frontend: store list upload** | `parseStoreList`, `parseCsv`, `onUpload` in `web/app.js` | step 3 in `web/index.html` | browser smoke (upload) |
 | **Frontend: map layers, colors, layer toggles, zoom hint** | `setupLayers`, `metersToPixels`, `setLayerVisible`, `updateZoomHint` in `web/app.js` | colors in `web/styles.css` (`--accent`, `--own`, `--skip`) | browser smoke (screenshots, axe) |
 | **Frontend: controls, URL sharing** | `state`, `syncUrl`, `restoreFromUrl`, `init` in `web/app.js` | `web/index.html` | browser smoke (URL restore) |
+| **Dark mode / theme colors** | tokens on `:root` and the two dark blocks in `web/styles.css` (keep them identical) | `web/theme.js` (saved choice), `toggleTheme`, `applyMapTheme`, `themeLayerPaint` in `web/app.js` | browser smoke (dark mode + axe) |
 | **Security headers / CSP** | `CONTENT_SECURITY_POLICY` and middleware in `api.py` | add new third-party origins here *and* test in a browser | `test_api.py::test_frontend_*` |
 | **Real client IP** | `deploy/Caddyfile.snippet` (server) | `scripts/update_caddy_cloudflare_ips.sh`, `ratelimit.py` docstring | `test_api.py::test_x_forwarded_for_is_ignored` |
 | **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore`; dependency groups in `pyproject.toml` (`pipeline` and `dev` stay out of the image) | CI `image` job |

@@ -8,7 +8,7 @@
 
 **How to use it:**
 1. Search for competitor chains (up to 10 in one list), or a whole category, like pet boarding.
-2. Optionally narrow it to a state or a metro area (e.g. Austin-Round Rock-San Marcos) and set the ad radius.
+2. Optionally narrow it to states and metro areas (e.g. "Texas + Oklahoma City metro") and set the ad radius.
 3. Optionally add your own locations: pick your chain, upload your store list (CSV with latitude/longitude), or both. By default Turf keeps only competitor locations **near yours**, where customers could switch to you; or flip it to **skip** those near yours so you don't pay to reach your own customers.
 4. Export a **Google Ads Editor** CSV (proximity targets, checked by importing into Editor) or a plain CSV for Meta and other tools.
 

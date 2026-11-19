@@ -1,16 +1,89 @@
 :root {
   --bg: #f7f6f3;
   --panel: #ffffff;
+  --field: #ffffff;  /* inputs, buttons, popovers */
+  --hover: #f1efe9;
   --text: #1d1d1f;
+  --on-text: #ffffff;  /* text on a --text background */
   --muted: #5f6368;
   --line: #e3e1dc;
-  --accent: #e4572e;      /* targets */
-  --accent-ink: #b8401c;
-  --own: #2e6fe4;         /* your locations */
-  --skip: #9aa0a6;        /* excluded targets */
+  --accent: #e4572e;  /* targets on the map */
+  --accent-ink: #b8401c;  /* accent as text */
+  --primary: #b8401c;  /* primary button (white text) */
+  --target-bg: #fdf0eb;
+  --target-line: #f6c9b8;
+  --own: #2e6fe4;  /* your locations */
+  --own-bg: #edf3fd;
+  --own-line: #c3d6f7;
+  --own-soft: #f6f9fe;
+  --own-dash: #9db8ea;
+  --skip: #9aa0a6;  /* skipped targets */
+  --area-bg: #f4f3ef;
+  --tag-bg: #eeeeee;
+  --overlay: rgba(255, 255, 255, .94);
+  --shadow: rgba(0, 0, 0, .12);
   --error: #b3261e;
   --radius: 10px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+
+/* Dark: follows the system unless the toggle picked light; the toggle can also force it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131518;
+    --panel: #1b1e22;
+    --field: #22262b;
+    --hover: #2b3036;
+    --text: #e8e6e3;
+    --on-text: #131518;
+    --muted: #a5a9af;
+    --line: #353a41;
+    --accent: #f0683f;
+    --accent-ink: #ff9470;
+    --primary: #c2441d;
+    --target-bg: #35241e;
+    --target-line: #6e3b2b;
+    --own: #6b9df5;
+    --own-bg: #1d2738;
+    --own-line: #34496f;
+    --own-soft: #1c2433;
+    --own-dash: #4d6ca6;
+    --skip: #858b92;
+    --area-bg: #252a30;
+    --tag-bg: #33383e;
+    --overlay: rgba(27, 30, 34, .94);
+    --shadow: rgba(0, 0, 0, .45);
+    --error: #f28b82;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131518;
+  --panel: #1b1e22;
+  --field: #22262b;
+  --hover: #2b3036;
+  --text: #e8e6e3;
+  --on-text: #131518;
+  --muted: #a5a9af;
+  --line: #353a41;
+  --accent: #f0683f;
+  --accent-ink: #ff9470;
+  --primary: #c2441d;
+  --target-bg: #35241e;
+  --target-line: #6e3b2b;
+  --own: #6b9df5;
+  --own-bg: #1d2738;
+  --own-line: #34496f;
+  --own-soft: #1c2433;
+  --own-dash: #4d6ca6;
+  --skip: #858b92;
+  --area-bg: #252a30;
+  --tag-bg: #33383e;
+  --overlay: rgba(27, 30, 34, .94);
+  --shadow: rgba(0, 0, 0, .45);
+  --error: #f28b82;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -39,7 +112,7 @@ h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacin
 h2 em { font-style: normal; text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
 .num {
   display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--text); color: #fff; font-size: 12px;
+  background: var(--text); color: var(--on-text); font-size: 12px;
 }
 .step { display: flex; flex-direction: column; gap: 10px; }
 .step h2 { margin-bottom: 0; }
@@ -49,7 +122,7 @@ h2 em { font-style: normal; text-transform: none; letter-spacing: 0; color: var(
 .field output { font-weight: 700; color: var(--accent-ink); }
 .field small, .check small { color: var(--muted); font-size: 12.5px; display: block; font-weight: 400; }
 input[type="search"], input[type="text"], select {
-  width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--field);
 }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 .check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; font-weight: 600; }
@@ -58,20 +131,27 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .combo { position: relative; }
 .combo-list {
   position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px;
-  list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.12); max-height: 320px; overflow-y: auto;
+  list-style: none; background: var(--field); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow); max-height: 320px; overflow-y: auto;
 }
 .combo-list li { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
-.combo-list li[aria-selected="true"], .combo-list li:hover { background: #f1efe9; }
+.combo-list li[aria-selected="true"], .combo-list li:hover { background: var(--hover); }
 .combo-list .meta { color: var(--muted); font-size: 13px; white-space: nowrap; }
 .combo-list .none { color: var(--muted); cursor: default; }
 
 .selected {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 9px 11px; border-radius: 8px; background: #fdf0eb; border: 1px solid #f6c9b8;
+  padding: 9px 11px; border-radius: 8px; background: var(--target-bg); border: 1px solid var(--target-line);
 }
-.selected.own { background: #edf3fd; border-color: #c3d6f7; }
-.selected.area { background: #f4f3ef; border-color: var(--line); }
+.selected.own { background: var(--own-bg); border-color: var(--own-line); }
+
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 2px; padding: 3px 4px 3px 10px; border-radius: 999px;
+  background: var(--area-bg); border: 1px solid var(--line); font-size: 13.5px; font-weight: 600; max-width: 100%;
+}
+.chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 6px; font-size: 16px; line-height: 1; }
 .selected-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .selected .name { font-weight: 700; }
 .selected .meta { color: var(--muted); font-size: 13px; }
@@ -79,7 +159,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .examples { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
 .examples button {
-  border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 13px;
+  border: 1px solid var(--line); background: var(--field); border-radius: 999px; padding: 3px 10px; cursor: pointer; font-size: 13px;
 }
 .examples button:hover { border-color: var(--accent); }
 
@@ -87,7 +167,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .upload { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--muted); flex-wrap: wrap; }
 .file-button {
-  border: 1px dashed #9db8ea; background: #f6f9fe; color: var(--text); border-radius: 8px;
+  border: 1px dashed var(--own-dash); background: var(--own-soft); color: var(--text); border-radius: 8px;
   padding: 6px 10px; cursor: pointer; font-weight: 600; font-size: 13.5px;
 }
 .file-button:hover { border-style: solid; }
@@ -100,14 +180,14 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent-ink);
   display: flex; gap: 10px; align-items: flex-start; font-size: 14px; font-weight: 600;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
 }
-.radio:has(input:checked) { border-color: var(--own); background: #f6f9fe; }
+.radio:has(input:checked) { border-color: var(--own); background: var(--own-soft); }
 .radio input { margin-top: 3px; accent-color: var(--own); }
 .radio small { color: var(--muted); font-size: 12.5px; display: block; font-weight: 400; }
 
 /* Always-visible results and export, pinned to the bottom of the panel. */
 .actionbar {
   position: sticky; bottom: -12px; margin: 0 -20px -12px; padding: 14px 20px 16px;
-  background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -6px 16px rgba(0,0,0,.06);
+  background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -6px 16px var(--shadow);
   display: flex; flex-direction: column; gap: 10px;
 }
 .actionbar .empty { color: var(--muted); margin: 0; }
@@ -119,10 +199,10 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent-ink);
 .export .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .export .buttons button { flex: 1 1 0; white-space: nowrap; }
 .export button {
-  padding: 9px 10px; font-size: 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff; cursor: pointer; font-weight: 600;
+  padding: 9px 10px; font-size: 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--field); cursor: pointer; font-weight: 600;
 }
-/* --accent-ink, not --accent: white on --accent is under the 4.5:1 contrast minimum. */
-.export button.primary { background: var(--accent-ink); border-color: var(--accent-ink); color: #fff; }
+/* --primary, not --accent: white on --accent is under the 4.5:1 contrast minimum. */
+.export button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .export button:disabled { opacity: .6; cursor: progress; }
 .export details { margin-top: 8px; font-size: 13.5px; color: var(--muted); }
 .export details .field { margin: 8px 0; }
@@ -131,9 +211,9 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent-ink);
 .list ol { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; max-height: 320px; overflow-y: auto; }
 .list li { padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14px; }
 .list li:last-child { border-bottom: 0; }
-.list li:hover { background: #f7f6f3; }
+.list li:hover { background: var(--hover); }
 .list li .addr { color: var(--muted); font-size: 13px; }
-.list li .tag { font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: #eee; color: var(--muted); margin-left: 6px; }
+.list li .tag { font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: var(--tag-bg); color: var(--muted); margin-left: 6px; }
 .list .more { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
 .list .dropped { margin-top: 10px; }
 .list .dropped summary { cursor: pointer; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
@@ -143,28 +223,28 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent-ink);
 .foot p { margin: 2px 0; }
 
 .legend {
-  position: absolute; left: 12px; bottom: 28px; background: rgba(255,255,255,.94); border-radius: 8px;
-  padding: 4px; display: flex; gap: 2px; font-size: 12.5px; box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  position: absolute; left: 12px; bottom: 28px; background: var(--overlay); border-radius: 8px;
+  padding: 4px; display: flex; gap: 2px; font-size: 12.5px; box-shadow: 0 1px 4px var(--shadow);
 }
 .legend button {
   border: 0; background: none; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12.5px;
   display: inline-flex; align-items: center;
 }
-.legend button:hover { background: #f1efe9; }
+.legend button:hover { background: var(--hover); }
 .legend button[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
 .legend button[aria-pressed="false"] .dot { opacity: .35; }
 .zoom-hint {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%); margin: 0; pointer-events: none;
-  background: rgba(255,255,255,.94); padding: 5px 12px; border-radius: 999px; font-size: 12.5px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.15); white-space: nowrap;
+  background: var(--overlay); padding: 5px 12px; border-radius: 999px; font-size: 12.5px;
+  box-shadow: 0 1px 4px var(--shadow); white-space: nowrap;
 }
 .loading { z-index: 1; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
 .dot.target { background: var(--accent); }
-.dot.excluded { background: #fff; border: 2px solid var(--skip); }
+.dot.excluded { background: var(--panel); border: 2px solid var(--skip); }
 .dot.own { background: var(--own); }
 .loading {
-  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--text); color: #fff;
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--on-text);
   padding: 6px 14px; border-radius: 999px; font-size: 13px;
 }
 
@@ -180,4 +260,34 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent-ink);
   .legend { top: 8px; bottom: auto; left: 8px; right: 56px; flex-wrap: wrap; }
   .zoom-hint { top: auto; bottom: 28px; }
   .actionbar { margin: 0 -16px -12px; padding: 12px 16px 14px; }
+}
+
+/* Theme toggle in the header. */
+.brand { position: relative; }
+.theme-toggle {
+  position: absolute; top: 0; right: 0; width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--field); color: var(--text); cursor: pointer;
+  display: grid; place-items: center; padding: 0;
+}
+.theme-toggle:hover { background: var(--hover); }
+.theme-toggle svg { width: 18px; height: 18px; }
+.theme-toggle .sun { display: none; }
+.theme-toggle[aria-pressed="true"] .sun { display: block; }
+.theme-toggle[aria-pressed="true"] .moon { display: none; }
+
+/* MapLibre's controls and popups, in the theme. */
+.maplibregl-popup-content { background: var(--field); color: var(--text); box-shadow: 0 2px 10px var(--shadow); }
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--field); }
+.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: var(--field); }
+.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--field); }
+.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--field); }
+.maplibregl-popup-close-button { color: var(--muted); }
+.maplibregl-ctrl-group { background: var(--field); }
+.maplibregl-ctrl.maplibregl-ctrl-attrib { background: var(--overlay); color: var(--muted); }
+.maplibregl-ctrl-attrib a { color: var(--text); }
+:root[data-theme="dark"] .maplibregl-ctrl-group button .maplibregl-ctrl-icon,
+:root[data-theme="dark"] .maplibregl-ctrl-attrib-button { filter: invert(1); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .maplibregl-ctrl-group button .maplibregl-ctrl-icon,
+  :root:not([data-theme="light"]) .maplibregl-ctrl-attrib-button { filter: invert(1); }
 }

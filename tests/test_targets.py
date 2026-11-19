@@ -341,10 +341,12 @@ def test_metro_filter(client: TestClient) -> None:
 def test_several_metros_and_state_combine(client: TestClient) -> None:
     both = post(client, chain_keys=["starbucks"], metros=["41860", "12420", "12420"])
     assert target_ids(both) == {"sb1", "sb2"} and both["metros"] == ["12420", "41860"]
-    # States and metros are both applied: San Francisco's metro isn't in TX.
-    assert (
-        target_ids(post(client, chain_keys=["starbucks"], metros=["41860"], states=["TX"])) == set()
-    )
+    # States and metros are a union: Texas plus the San Francisco metro.
+    union = post(client, chain_keys=["starbucks"], metros=["41860"], states=["TX"])
+    assert target_ids(union) == {"sb1", "sb2"}
+    # Overlapping areas (the Austin metro is inside TX) don't duplicate a target.
+    overlap = post(client, chain_keys=["starbucks"], metros=["12420"], states=["TX"])
+    assert sorted(t["id"] for t in overlap["targets"]) == ["sb1"]
 
 
 def test_metro_validation(client: TestClient) -> None:

@@ -18,6 +18,7 @@ const METERS_PER_MILE = 1609.344;
 const LIST_LIMIT = 300;  // rows shown in the sidebar list; the map and exports have all of them
 const MAX_CHAINS = 10;   // matches MAX_CHAINS in targets.py
 const MAX_UPLOAD = 5000; // matches MAX_UPLOADED_LOCATIONS in targets.py
+const MAX_METROS = 10;   // matches MAX_METROS in targets.py
 const DEFAULT_OWN_RADIUS = { only_near: 3, skip_near: 1 };  // matches targets.py
 
 const state = {
@@ -25,8 +26,7 @@ const state = {
   own: null,          // SearchResult with kind "chain": the user's own chain
   uploaded: null,     // { fileName, locations: [{name, lat, lon}] } from an uploaded CSV
   ownFilter: "only_near",
-  usState: "",
-  metro: null,        // { kind: "metro", key: CBSA code, display_name, detail, n_open, bounds }
+  areas: [],          // states ({kind: "state", key: "TX"}) and metros ({kind: "metro", key: CBSA code, bounds}); a union
   radiusMi: 1,
   ownRadiusMi: DEFAULT_OWN_RADIUS.only_near,
   unverified: false,
@@ -75,14 +75,27 @@ function targetRequest() {
     category: isCategory() ? state.targets[0].key : null,
     radius_mi: state.radiusMi,
     include_unverified: state.unverified,
-    states: state.usState ? [state.usState] : null,
-    metros: state.metro ? [state.metro.key] : null,
+    states: areaKeys("state"),
+    metros: areaKeys("metro"),
     own_chain_key: state.own ? state.own.key : null,
     own_locations: state.uploaded ? state.uploaded.locations : null,
     own_filter: state.ownFilter,
     own_radius_mi: state.ownRadiusMi,
     campaign_name: $("campaign").value.trim() || null,
   };
+}
+
+function areaKeys(kind) {
+  const keys = state.areas.filter((a) => a.kind === kind).map((a) => a.key);
+  return keys.length ? keys : null;
+}
+
+// " in Texas", " in the Austin-Round Rock-San Marcos, TX area", " in Texas and Oklahoma", " in 4 areas"
+function describeAreas() {
+  const name = (a) => (a.kind === "metro" ? `the ${a.display_name} area` : a.display_name);
+  if (!state.areas.length) return " in the US";
+  if (state.areas.length <= 2) return " in " + state.areas.map(name).join(" and ");
+  return ` in ${state.areas.length} areas`;
 }
 
 function targetLabel() {
@@ -200,7 +213,10 @@ function downloadTemplate() {
 // ---------- Chain search (accessible combobox) ----------
 
 // search(q) resolves to items ({kind, key, display_name, detail, n_open, ...}).
-function setupCombo(inputId, listId, search, onPick, noneText) {
+// opts.minChars: characters before searching (default 2). opts.emptyItems(): suggestions
+// shown when the box is focused and empty, so it also works like a dropdown.
+function setupCombo(inputId, listId, search, onPick, noneText, opts = {}) {
+  const minChars = opts.minChars ?? 2;
   const input = $(inputId);
   const list = $(listId);
   let items = [];
@@ -250,10 +266,21 @@ function setupCombo(inputId, listId, search, onPick, noneText) {
     onPick(chain);
   };
 
+  const showEmpty = () => {
+    if (!opts.emptyItems || input.value.trim()) return;
+    seq++;  // drop any search still in flight
+    items = opts.emptyItems();
+    active = -1;
+    render();
+  };
+  input.addEventListener("focus", showEmpty);
+  input.addEventListener("click", () => { if (list.hidden) showEmpty(); });
+
   input.addEventListener("input", () => {
     clearTimeout(timer);
     const q = input.value.trim();
-    if (q.length < 2) { close(); return; }
+    if (!q && opts.emptyItems) { showEmpty(); return; }
+    if (q.length < minChars) { close(); return; }
     timer = setTimeout(async () => {
       const mine = ++seq;
       try {
@@ -272,7 +299,7 @@ function setupCombo(inputId, listId, search, onPick, noneText) {
     if (list.hidden) return;
     if (e.key === "ArrowDown") { active = Math.min(active + 1, items.length - 1); render(); e.preventDefault(); }
     else if (e.key === "ArrowUp") { active = Math.max(active - 1, 0); render(); e.preventDefault(); }
-    else if (e.key === "Enter") { pick(active); e.preventDefault(); }
+    else if (e.key === "Enter") { if (active >= 0) pick(active); e.preventDefault(); }
     else if (e.key === "Escape") { close(); }
   });
   input.addEventListener("blur", () => setTimeout(close, 100));
@@ -336,6 +363,7 @@ function renderUploaded() {
 function optionMeta(c) {
   if (c.kind === "category") return `every business in category · ${fmt.format(c.n_open)} open`;
   if (c.kind === "metro") return `${c.detail} area · ${fmt.format(c.n_total)} places`;
+  if (c.kind === "state") return "state";
   // Chains show their main category, so similar names ("Orangetheory" the gym
   // vs. a store) can be told apart.
   return [c.detail && c.detail.replaceAll("_", " "), `${fmt.format(c.n_open)} open`].filter(Boolean).join(" · ");
@@ -351,12 +379,54 @@ const toMetroItem = (m) => ({
 const searchMetros = async (q) =>
   (await getJson(`/api/metros/search?q=${encodeURIComponent(q)}&limit=8`)).map(toMetroItem);
 
-function pickMetro(m) {
-  state.metro = m;
-  state.usState = "";
-  $("state-select").value = "";
+const stateItem = ([code, name]) => ({ kind: "state", key: code, display_name: name });
+const chosenArea = (item) => state.areas.some((a) => a.kind === item.kind && a.key === item.key);
+
+// States match on their code ("tx") or the start of any word ("carolina"); they rank
+// before metros, so "Texas" comes before "Texarkana". Metros come from the API.
+async function searchAreas(q) {
+  const norm = q.toLowerCase().trim();
+  const states = STATES.filter(([code, name]) =>
+    code.toLowerCase() === norm || name.toLowerCase().split(" ").some((w, i, ws) => ws.slice(i).join(" ").startsWith(norm)))
+    .map(stateItem);
+  const metros = norm.length >= 2 ? await searchMetros(q) : [];
+  return [...states.slice(0, 5), ...metros].filter((a) => !chosenArea(a)).slice(0, 10);
+}
+
+function addArea(item) {
+  showError("");
+  if (chosenArea(item)) return;
+  if (item.kind === "metro" && state.areas.filter((a) => a.kind === "metro").length >= MAX_METROS) {
+    showError(`That's the limit of ${MAX_METROS} metro areas in one list.`);
+    return;
+  }
+  state.areas = [...state.areas, item];
   update({ fit: true });
-  if (!state.targets.length) map.fitBounds(m.bounds, { padding: 40, duration: 600 });
+  if (!state.targets.length && item.bounds) map.fitBounds(item.bounds, { padding: 40, duration: 600 });
+}
+
+function renderAreas() {
+  const ul = $("area-selected");
+  ul.innerHTML = "";
+  state.areas.forEach((a, i) => {
+    const li = document.createElement("li");
+    li.className = "chip";
+    const label = document.createElement("span");
+    label.textContent = a.kind === "metro" ? `${a.display_name} ${a.detail} area` : a.display_name;
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.setAttribute("aria-label", `Remove ${a.display_name}`);
+    clear.textContent = "×";
+    clear.addEventListener("click", () => {
+      state.areas.splice(i, 1);
+      update({ fit: true });
+      $("area-input").focus();
+    });
+    li.append(label, clear);
+    ul.append(li);
+  });
+  ul.hidden = state.areas.length === 0;
+  $("area-input").placeholder = state.areas.length ? "Add another state or metro area" : "All of the US. Type a state or metro area";
 }
 
 function renderTargets() {
@@ -406,9 +476,88 @@ function addTarget(result) {
 
 // ---------- Map ----------
 
+// ---------- Theme ----------
+
+const MAP_STYLES = {
+  light: "https://tiles.openfreemap.org/styles/positron",
+  dark: "https://tiles.openfreemap.org/styles/dark",
+};
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+// The saved choice (theme.js put it on <html>), else the system setting.
+function currentTheme() {
+  const forced = document.documentElement.dataset.theme;
+  return forced === "light" || forced === "dark" ? forced : darkQuery.matches ? "dark" : "light";
+}
+
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// Map layer colors come from the CSS tokens, so they follow the theme.
+function themeLayerPaint() {
+  const accent = cssVar("--accent"), own = cssVar("--own"), panel = cssVar("--panel"), skip = cssVar("--skip");
+  return {
+    "own-radius": { "circle-color": own, "circle-stroke-color": own },
+    "target-radius": { "circle-color": accent, "circle-stroke-color": accent },
+    "dropped-point": { "circle-color": panel, "circle-stroke-color": skip },
+    "own-point": { "circle-color": own, "circle-stroke-color": panel },
+    "target-point": { "circle-color": accent, "circle-stroke-color": panel },
+  };
+}
+
+function applyLayerTheme() {
+  for (const [layer, paint] of Object.entries(themeLayerPaint())) {
+    if (!map.getLayer(layer)) continue;
+    for (const [prop, value] of Object.entries(paint)) map.setPaintProperty(layer, prop, value);
+  }
+}
+
+const OUR_SOURCES = ["targets", "dropped", "own"];
+let mapTheme = currentTheme();
+
+// Swap the basemap, carrying our sources (with their data) and layers over.
+function applyMapTheme() {
+  const theme = currentTheme();
+  if (theme === mapTheme) return;
+  mapTheme = theme;
+  map.setStyle(MAP_STYLES[theme], {
+    diff: false,
+    transformStyle: (prev, next) => {
+      if (!prev) return next;
+      const sources = { ...next.sources };
+      for (const id of OUR_SOURCES) if (prev.sources[id]) sources[id] = prev.sources[id];
+      const ours = prev.layers.filter((l) => OUR_SOURCES.includes(l.source));
+      return { ...next, sources, layers: [...next.layers, ...ours] };
+    },
+  });
+  map.once("style.load", applyLayerTheme);
+}
+
+function renderThemeToggle() {
+  const dark = currentTheme() === "dark";
+  const button = $("theme-toggle");
+  button.setAttribute("aria-pressed", String(dark));
+}
+
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("turf-theme", next); } catch { /* not saved; still applied */ }
+  renderThemeToggle();
+  applyLayerTheme();
+  applyMapTheme();
+}
+
+// Following the system (no saved choice): track it live.
+darkQuery.addEventListener("change", () => {
+  if (document.documentElement.dataset.theme) return;
+  renderThemeToggle();
+  applyLayerTheme();
+  applyMapTheme();
+});
+
 const map = new maplibregl.Map({
   container: "map",
-  style: "https://tiles.openfreemap.org/styles/positron",
+  style: MAP_STYLES[mapTheme],
   center: [-97, 38.5],
   zoom: 3.4,
   attributionControl: { compact: true },
@@ -486,6 +635,7 @@ async function setupLayers() {
     map.on("mouseenter", layer, () => { map.getCanvas().style.cursor = "pointer"; });
     map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; });
   }
+  applyLayerTheme();
   map.on("zoomend", updateZoomHint);
   map.on("moveend", updateZoomHint);
 }
@@ -640,8 +790,7 @@ async function refresh({ fit = false } = {}) {
     map.getSource("own").setData(toFeatures(ownRows, { kind: "own", radius_m: state.ownRadiusMi * METERS_PER_MILE }));
 
     $("n-targets").textContent = fmt.format(result.targets.length);
-    const where = state.metro ? ` in the ${state.metro.display_name} area`
-      : state.usState ? ` in ${STATES.find(([c]) => c === state.usState)[1]}` : " in the US";
+    const where = describeAreas();
     const parts = [`${targetLabel()}${where}, ${state.radiusMi} mi radius`];
     if (hasOwn()) {
       parts.push(state.ownFilter === "only_near"
@@ -690,7 +839,7 @@ async function ownLocations() {
   const rows = [];
   if (state.own) {
     const res = await getJson(`/api/chains/${encodeURIComponent(state.own.key)}/locations?include_unverified=true` +
-      (state.usState ? `&state=${state.usState}` : "") + (state.metro ? `&metro=${state.metro.key}` : ""));
+      ownAreaParam());
     rows.push(...res.locations);
   }
   if (state.uploaded) {
@@ -699,6 +848,14 @@ async function ownLocations() {
     })));
   }
   return rows;
+}
+
+// The locations endpoint takes one area; with several, fetch all of yours (the map
+// shows them all anyway, and the backend counts them regardless of area).
+function ownAreaParam() {
+  if (state.areas.length !== 1) return "";
+  const [a] = state.areas;
+  return a.kind === "state" ? `&state=${a.key}` : `&metro=${a.key}`;
 }
 
 // With no competitor picked yet, still show your locations once you add them.
@@ -749,8 +906,7 @@ function syncUrl() {
     p.set("mode", state.ownFilter === "only_near" ? "near" : "skip");
     if (state.ownRadiusMi !== DEFAULT_OWN_RADIUS[state.ownFilter]) p.set("d", String(state.ownRadiusMi));
   }
-  if (state.usState) p.set("state", state.usState);
-  if (state.metro) p.set("metro", state.metro.key);
+  for (const a of state.areas) p.append(a.kind, a.key);
   if (state.radiusMi !== 1) p.set("r", String(state.radiusMi));
   if (state.unverified) p.set("unverified", "1");
   const qs = p.toString();
@@ -771,8 +927,6 @@ async function restoreFromUrl() {
   state.ownFilter = p.get("own") && p.get("mode") !== "near" ? "skip_near" : "only_near";
   state.ownRadiusMi = clamp(parseFloat(p.get("d") ?? p.get("skip")), 0.5, 25, DEFAULT_OWN_RADIUS[state.ownFilter]);
   state.unverified = p.get("unverified") === "1";
-  const st = (p.get("state") || "").toUpperCase();
-  state.usState = STATES.some(([c]) => c === st) ? st : "";
   try {
     if (p.get("cat")) {
       const c = await lookup("category", p.get("cat"));
@@ -782,17 +936,17 @@ async function restoreFromUrl() {
       state.targets = (await Promise.all(keys.map((k) => lookup("chain", k)))).filter(Boolean);
     }
     if (p.get("own")) state.own = await lookup("chain", p.get("own"));
-    const metro = p.get("metro");
-    if (metro && /^[0-9]{5}$/.test(metro) && !state.usState) {
-      state.metro = toMetroItem(await getJson(`/api/metros/${metro}`));
-    }
+    const states = [...new Set(p.getAll("state").map((v) => v.toUpperCase()))]
+      .map((c) => STATES.find(([code]) => code === c)).filter(Boolean).map(stateItem);
+    const codes = [...new Set(p.getAll("metro"))].filter((c) => /^[0-9]{5}$/.test(c)).slice(0, MAX_METROS);
+    const metros = await Promise.all(codes.map((c) => getJson(`/api/metros/${c}`).then(toMetroItem).catch(() => null)));
+    state.areas = [...states, ...metros.filter(Boolean)];
   } catch (err) {
     showError(err.message);
   }
   $("radius").value = state.radiusMi;
   $("own-radius").value = state.ownRadiusMi;
   $("unverified").checked = state.unverified;
-  $("state-select").value = state.usState;
   document.querySelector(`input[name="own-filter"][value="${state.ownFilter}"]`).checked = true;
   updateOutputs();
 }
@@ -808,8 +962,7 @@ function updateOutputs() {
   $("own-mode").hidden = !hasOwn();
   renderTargets();
   renderSelected("own-selected", state.own, () => { state.own = null; update(); });
-  renderSelected("metro-selected", state.metro, () => { state.metro = null; update({ fit: true }); $("metro-input").focus(); });
-  $("metro-combo").hidden = Boolean(state.metro);
+  renderAreas();
   renderUploaded();
 }
 
@@ -824,13 +977,12 @@ function debounce(fn, ms) {
 }
 
 function init() {
-  const select = $("state-select");
-  for (const [code, name] of STATES) select.add(new Option(name, code));
 
   // Once a chain is picked, the search only offers more chains.
   setupCombo("target-input", "target-results", (q) => searchAll(state.targets.length ? "chain" : null)(q), addTarget,
     () => (state.targets.length ? "No chains found. Try a shorter name." : "Nothing found. Try a shorter name."));
-  setupCombo("metro-input", "metro-results", searchMetros, pickMetro, "No metro areas found. Try a city name.");
+  setupCombo("area-input", "area-results", searchAreas, addArea, "No states or metro areas found. Try a city name.",
+    { minChars: 1, emptyItems: () => STATES.map(stateItem).filter((a) => !chosenArea(a)) });
   setupCombo("own-input", "own-results", searchAll("chain"), (c) => {
     if (state.targets.some((t) => t.key === c.key)) { showError(`${c.display_name} is already a competitor in step 1.`); return; }
     state.own = c;
@@ -861,13 +1013,11 @@ function init() {
   $("radius").addEventListener("input", (e) => { state.radiusMi = Number(e.target.value); updateOutputs(); slow(); });
   $("own-radius").addEventListener("input", (e) => { state.ownRadiusMi = Number(e.target.value); updateOutputs(); slow(); });
   $("unverified").addEventListener("change", (e) => { state.unverified = e.target.checked; update(); });
-  select.addEventListener("change", (e) => {
-    state.usState = e.target.value;
-    if (state.usState) state.metro = null;  // one area at a time: a state or a metro
-    update({ fit: true });
-  });
   document.querySelectorAll(".export button[data-format]").forEach((b) =>
     b.addEventListener("click", () => exportCsv(b.dataset.format, b)));
+
+  renderThemeToggle();
+  $("theme-toggle").addEventListener("click", toggleTheme);
 
   getJson("/api/meta").then((m) => { $("release").textContent = m.release; }).catch(() => {});
 }

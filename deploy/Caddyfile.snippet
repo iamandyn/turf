@@ -1,5 +1,8 @@
-# Add to the server's Caddyfile (replace the domain), then `caddy validate` and reload.
-turf.example.com {
+# Block added to the server's /etc/caddy/Caddyfile. DNS is a proxied (orange-cloud)
+# Cloudflare A record, so the origin IP stays hidden; Caddy still gets its own
+# Let's Encrypt certificate and Cloudflare connects to it in Full (strict) mode.
+# Apply with: back up, append, `caddy validate`, `systemctl reload caddy`.
+turf.dunkasaur.gg {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:8090
 }

@@ -113,9 +113,16 @@ def main() -> None:
         page.wait_for_selector("#detail:not([hidden])")
         n_bars = page.locator("#detail-signals li").count()
         check(n_bars == n_signals, f"detail panel: {n_bars} signal bars", problems)
-        page.wait_for_load_state("networkidle")
-        brief = page.inner_text("#detail-brief")
-        print(f"brief: {brief.splitlines()[1] if brief.count(chr(10)) else brief or '(none)'}")
+        # The demo path (pets, Denver + Austin) has pre-written briefs for its top lookalikes.
+        page.wait_for_selector(
+            "#detail-brief .brief-headline, #detail-brief .muted", timeout=10_000
+        )
+        headline = page.locator("#detail-brief .brief-headline")
+        check(
+            headline.count() == 1,
+            f"creative brief: {headline.inner_text() if headline.count() else '(none)'}",
+            problems,
+        )
         page.wait_for_timeout(800)  # map zoom
         page.screenshot(path=str(out / "02-lookalikes.png"))
         check_a11y(page, "results page", problems)

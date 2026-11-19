@@ -174,7 +174,8 @@ def test_presets(client: TestClient) -> None:
     presets = client.get("/api/presets").json()
     assert [p["key"] for p in presets] == list(PRESETS)
     assert presets[0]["categories"] == list(PRESETS["pets"].categories)
-    assert not any(p["has_briefs"] for p in presets)
+    # The shipped briefs cover every preset.
+    assert all(p["has_briefs"] for p in presets)
 
 
 def test_category_search(client: TestClient) -> None:
@@ -195,7 +196,8 @@ def test_metro_search_and_get(client: TestClient) -> None:
 
 def test_meta(client: TestClient) -> None:
     meta = client.get("/api/meta").json()
-    assert (meta["metros"], meta["briefs"], meta["release"]) == (12, 0, "test-release")
+    assert (meta["metros"], meta["release"]) == (12, "test-release")
+    assert meta["briefs"] == len(briefs.load()) > 0
 
 
 # --- Briefs ---
@@ -230,5 +232,8 @@ def test_briefs_loaded_and_served(
 
 def test_shipped_briefs_are_valid() -> None:
     loaded = briefs.load()
-    for (preset, code), brief in loaded.items():
-        assert preset in PRESETS and len(code) == 5 and brief.grounded_in
+    assert {preset for preset, _ in loaded} == set(PRESETS)
+    for (_, code), brief in loaded.items():
+        assert len(code) == 5 and code.isdigit()
+        assert brief.headline and brief.angles and brief.local_context
+        assert brief.grounded_in[-1].endswith("(Census)")

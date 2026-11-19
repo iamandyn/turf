@@ -27,12 +27,15 @@ USER turf
 # TURF_CLIENT_IP_HEADER: rate limiting keys on X-Client-IP, which Caddy sets
 # (replacing anything a visitor sends) from Cloudflare's CF-Connecting-IP.
 # X-Forwarded-For is not trusted: Cloudflare passes through what visitors put in it.
+# TURF_MCP_ALLOWED_HOSTS: Host headers /mcp accepts (DNS-rebinding protection;
+# Caddy passes the public host through).
 ARG TURF_COMMIT=dev
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     TURF_DB=/data/turf.duckdb \
     TURF_COMMIT=$TURF_COMMIT \
-    TURF_CLIENT_IP_HEADER=X-Client-IP
+    TURF_CLIENT_IP_HEADER=X-Client-IP \
+    TURF_MCP_ALLOWED_HOSTS=turf.dunkasaur.gg,127.0.0.1:*,localhost:*
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

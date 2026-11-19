@@ -34,6 +34,7 @@ class Rule:
 # Most specific first; the first matching rule applies.
 DEFAULT_RULES: tuple[Rule, ...] = (
     Rule("/api/markets", limit=60, window_s=60, method="POST"),
+    Rule("/mcp", limit=120, window_s=60),
     Rule("/api/", limit=300, window_s=60),
 )
 

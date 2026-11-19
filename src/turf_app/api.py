@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
-from turf_app import briefs
+from turf_app import briefs, mcp_server
 from turf_app.markets import (
     PRESETS,
     MarketRequest,
@@ -196,12 +196,16 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
                 raise RuntimeError(f"preset {preset.key}: unknown categories {sorted(missing)}")
         app.state.db = con
         app.state.briefs = briefs.load()
+        mcp_server.start(mcp)
         try:
-            yield
+            async with mcp.session_manager.run():
+                yield
         finally:
             con.close()
 
     app = FastAPI(title="Turf", lifespan=lifespan)
+    # MCP tools for AI agents (see mcp_server.py), sharing the database.
+    mcp = mcp_server.build_mcp(lambda: app.state.db.cursor(), lambda: app.state.briefs)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     @app.middleware("http")
@@ -368,6 +372,9 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
     @app.get("/index.html", include_in_schema=False)
     def index() -> HTMLResponse:
         return HTMLResponse(render_index())
+
+    # Before the static mount, so /mcp isn't treated as a file.
+    app.router.routes.append(mcp_server.mcp_route(mcp))
 
     # Last, so API routes and the page win.
     app.mount("/", StaticFiles(directory=WEB_DIR), name="web")

@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions in ci.yml up to date via weekly PRs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

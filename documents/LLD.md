@@ -223,6 +223,7 @@ Over the limit returns `429` with `Retry-After` in seconds. Tracked keys are cap
 
 - **Container:** `turf`, image from `state/.env`, port `127.0.0.1:8090→8000`. Limits: 4 GB, 2 CPUs, read-only root filesystem, `/tmp` tmpfs, `no-new-privileges`. Data mounted read-only at `/data`. Health check on `/healthz`.
 - **Docker:** daemon logs rotate at 10 MB × 3 (`/etc/docker/daemon.json`).
+- **Image** (`Dockerfile`, two stages, ~330 MB): the builder runs `uv sync --frozen --no-default-groups --no-editable`; the runtime stage copies only `/app/.venv` into `python:3.12-slim`, so there's no uv, no download cache, and no `pipeline` dependency group (numpy).
 - **Firewall (ufw):** allows 59595 (SSH), 80 and 443 only. Docker's firewall rules bypass ufw for *published* ports, which is why the port is published on 127.0.0.1 only.
 
 ### 4.2 Users and keys
@@ -250,6 +251,8 @@ Created and updated by `scripts/setup_server.sh`, which is re-runnable. CI is de
 | `check` | every push and PR | `uv sync --frozen`, ruff check, ruff format --check, mypy (strict), pytest, `bash -n scripts/*.sh` |
 | `image` | push to `main` | buildx, then push `ghcr.io/iamandyn/turf:<sha>` and `:main` with `TURF_COMMIT=<sha>` and a GitHub Actions cache |
 | `deploy` | after `image` | SSH as `turfdeploy` with `deploy $GITHUB_SHA` (job token on stdin), then a public smoke test: `/healthz`, `/api/meta` commit equals SHA, search, targets |
+
+Third-party actions are **pinned to commit SHAs** (release tag in a comment); `.github/dependabot.yml` opens weekly update PRs.
 
 **Secrets** (repo → Settings → Secrets and variables → Actions):
 

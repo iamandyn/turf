@@ -464,10 +464,10 @@ wheels = [
 name = "turf"
 version = "0.1.0"
 source = { editable = "." }
+default-groups = ["dev", "pipeline"]
 dependencies = [
     { name = "duckdb" },
     { name = "fastapi" },
-    { name = "numpy" },
     { name = "pydantic" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -479,12 +479,14 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+pipeline = [
+    { name = "numpy" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=1.1" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "numpy", specifier = ">=2.5.5" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
@@ -496,6 +498,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.7" },
 ]
+pipeline = [{ name = "numpy", specifier = ">=2.5.5" }]
 
 [[package]]
 name = "typing-extensions"

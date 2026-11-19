@@ -30,7 +30,8 @@ turf/
 ├── deploy/
 │   ├── docker-compose.yml   Production container definition (installed to /opt/turf)
 │   └── Caddyfile.snippet    Turf's parts of the server Caddyfile
-├── .github/workflows/ci.yml CI/CD: check → image → deploy → smoke test
+├── .github/workflows/ci.yml CI/CD: check → image → deploy → smoke test (actions pinned to SHAs)
+├── .github/dependabot.yml   Weekly PRs to update the pinned actions
 ├── Dockerfile               API image (data is mounted, not baked in)
 ├── documents/               HLD, LLD, this guide
 ├── data/                    Pipeline output, per release (gitignored)
@@ -56,7 +57,7 @@ turf/
 | **CSV export formats** | `to_csv`, `ExportFormat` in `targets.py` | `export_targets` route in `api.py` | `test_targets.py::test_*export*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
 | **Real client IP** | `deploy/Caddyfile.snippet` (server) | `scripts/update_caddy_cloudflare_ips.sh`, `ratelimit.py` docstring | `test_api.py::test_x_forwarded_for_is_ignored` |
-| **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore` | CI `image` job |
+| **Container** | `Dockerfile` | `deploy/docker-compose.yml`, `.dockerignore`; dependency groups in `pyproject.toml` (`pipeline` and `dev` stay out of the image) | CI `image` job |
 | **CI/CD** | `.github/workflows/ci.yml` | `scripts/server_deploy.sh` | CI itself |
 | **Server setup** | `scripts/setup_server.sh` | `deploy/docker-compose.yml`, `scripts/server_deploy.sh` | manual |
 | **Data release / rollback** | `scripts/deploy_data.sh` | | manual |
@@ -105,6 +106,7 @@ Chain these with `&&` so a failure stops the commit. CI runs the same checks.
 
 ## Conventions
 
+- Dependencies: runtime in `[project].dependencies`; offline-only packages in the `pipeline` group; tools in `dev`. Local `uv sync` installs all three.
 - Python 3.12, `uv`, `mypy --strict`, ruff (line length 100; long lines are allowed in `tests/` for data tables).
 - DuckDB SQL is written inline; Python functions are registered as DuckDB functions only for logic that must also run in the API (normalization).
 - Every runnable script lives in `scripts/`; useful one-off queries get saved there too.

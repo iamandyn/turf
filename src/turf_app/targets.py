@@ -18,7 +18,7 @@ from enum import StrEnum
 from typing import Annotated
 
 import duckdb
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Meta Ads Manager allows a 1-50 mile radius around an address in the US;
 # staying inside that range keeps exports valid for both Meta and Google.
@@ -33,8 +33,21 @@ class ExportFormat(StrEnum):
     google_ads_editor = "google_ads_editor"
 
 
+# Above this, a list is too big to show in a browser or upload as one file;
+# the user is asked to pick a state. Nearly every chain fits nationwide (Subway,
+# ~23k open); U-Haul (~29.5k) and broad categories (restaurants, 280k) don't.
+MAX_TARGETS = 25_000
+
+
 class TargetRequest(BaseModel):
-    chain_key: str = Field(min_length=1, description="Competitor chain to target")
+    chain_key: str | None = Field(
+        default=None, min_length=1, description="Competitor chain to target"
+    )
+    category: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Or: every business in an Overture category, e.g. pet_groomer",
+    )
     radius_mi: float = Field(default=1.0, ge=MIN_RADIUS_MI, le=MAX_RADIUS_MI)
     include_unverified: bool = False
     states: list[StateCode] | None = Field(default=None, max_length=51)
@@ -43,6 +56,16 @@ class TargetRequest(BaseModel):
     )
     exclude_radius_mi: float = Field(default=1.0, ge=0.1, le=MAX_RADIUS_MI)
     campaign_name: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _one_target(self) -> TargetRequest:
+        if (self.chain_key is None) == (self.category is None):
+            raise ValueError("Give exactly one of chain_key or category")
+        return self
+
+    @property
+    def target_key(self) -> str:
+        return self.chain_key or self.category or ""
 
     @field_validator("states")
     @classmethod
@@ -74,7 +97,8 @@ class Excluded(BaseModel):
 
 
 class TargetResponse(BaseModel):
-    chain_key: str
+    chain_key: str | None
+    category: str | None
     radius_mi: float
     candidates: int
     excluded_count: int
@@ -84,6 +108,19 @@ class TargetResponse(BaseModel):
 
 class UnknownChainError(LookupError):
     pass
+
+
+class UnknownCategoryError(LookupError):
+    pass
+
+
+class TooManyTargetsError(ValueError):
+    def __init__(self, count: int) -> None:
+        super().__init__(
+            f"That's {count:,} locations, more than the {MAX_TARGETS:,} limit for one list. "
+            "Pick a state to narrow it down."
+        )
+        self.count = count
 
 
 def _haversine_mi(lat1: str, lon1: str, lat2: str, lon2: str) -> str:
@@ -98,15 +135,44 @@ def _check_chain(db: duckdb.DuckDBPyConnection, chain_key: str) -> None:
         raise UnknownChainError(chain_key)
 
 
+def _check_category(db: duckdb.DuckDBPyConnection, category: str) -> None:
+    row = db.execute("SELECT 1 FROM categories WHERE category_key = ?", [category]).fetchone()
+    if row is None:
+        raise UnknownCategoryError(category)
+
+
+# Candidate filter shared by the size check and the main query.
+_CANDIDATE_FILTER = """
+    ($chain IS NULL OR chain_key = $chain)
+    AND ($category IS NULL OR category = $category)
+    AND ($unverified OR status = 'open')
+    AND ($states IS NULL OR list_contains($states, state))
+"""
+
+
 def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetResponse:
-    _check_chain(db, req.chain_key)
+    if req.chain_key:
+        _check_chain(db, req.chain_key)
+    if req.category:
+        _check_category(db, req.category)
     if req.exclude_chain_key:
         _check_chain(db, req.exclude_chain_key)
 
-    params: dict[str, object] = {
+    filters: dict[str, object] = {
         "chain": req.chain_key,
+        "category": req.category,
         "unverified": req.include_unverified,
         "states": req.states,
+    }
+    count_row = db.execute(
+        f"SELECT count(*) FROM places WHERE {_CANDIDATE_FILTER}", filters
+    ).fetchone()
+    count = int(count_row[0]) if count_row else 0
+    if count > MAX_TARGETS:
+        raise TooManyTargetsError(count)
+
+    params: dict[str, object] = {
+        **filters,
         "own": req.exclude_chain_key,
         "excl_mi": req.exclude_radius_mi,
         # Latitude window for the distance prefilter: 1 degree ~ 69 miles.
@@ -118,9 +184,7 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
         WITH candidates AS (
             SELECT id, name, status, address, locality, state, postcode, lat, lon
             FROM places
-            WHERE chain_key = $chain
-              AND ($unverified OR status = 'open')
-              AND ($states IS NULL OR list_contains($states, state))
+            WHERE {_CANDIDATE_FILTER}
         ),
         -- Your own locations count even when unverified: better to skip a
         -- target near a store of yours that may be open than to pay to
@@ -168,6 +232,7 @@ def build_targets(db: duckdb.DuckDBPyConnection, req: TargetRequest) -> TargetRe
             )
     return TargetResponse(
         chain_key=req.chain_key,
+        category=req.category,
         radius_mi=req.radius_mi,
         candidates=len(rows),
         excluded_count=len(excluded),

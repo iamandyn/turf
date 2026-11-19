@@ -18,11 +18,11 @@
       </header>
 
       <section class="step" aria-labelledby="step1-title">
-        <h2 id="step1-title"><span class="num">1</span> Competitor</h2>
+        <h2 id="step1-title"><span class="num">1</span> Who to target</h2>
         <div class="combo" data-role="target-search">
           <label for="target-input" class="sr-only">Competitor chain</label>
           <input id="target-input" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="Search a chain, e.g. Orangetheory"
+                 placeholder="A competitor chain or a category"
                  role="combobox" aria-expanded="false" aria-autocomplete="list"
                  aria-controls="target-results">
           <ul id="target-results" class="combo-list" role="listbox" hidden></ul>
@@ -30,9 +30,9 @@
         <div class="selected" id="target-selected" hidden></div>
         <div class="examples" id="examples">
           <span>Try:</span>
-          <button type="button" data-chain="orangetheory fitness">Orangetheory Fitness</button>
-          <button type="button" data-chain="planet fitness">Planet Fitness</button>
-          <button type="button" data-chain="chick fil a">Chick-fil-A</button>
+          <button type="button" data-key="orangetheory fitness">Orangetheory Fitness</button>
+          <button type="button" data-key="planet fitness">Planet Fitness</button>
+          <button type="button" data-kind="category" data-key="pet_boarding">All pet boarding &amp; daycare</button>
         </div>
       </section>
 
@@ -85,7 +85,7 @@
         <p><a href="https://github.com/iamandyn/turf" target="_blank" rel="noopener">Source</a> · <a href="/docs" target="_blank" rel="noopener">API</a></p>
       </footer>
       <section class="actionbar" aria-live="polite" aria-label="Results and export">
-        <p class="empty" id="empty-state">Pick a competitor to see their locations.</p>
+        <p class="empty" id="empty-state">Pick a competitor chain, or a category to target every business of that kind.</p>
         <div id="summary" hidden>
           <p class="big"><strong id="n-targets">0</strong> targets</p>
           <p class="sub" id="summary-detail"></p>

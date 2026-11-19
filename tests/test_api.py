@@ -161,3 +161,38 @@ def test_api_responses_have_no_csp(client: TestClient) -> None:
 
 def test_unknown_api_path_is_404_not_frontend(client: TestClient) -> None:
     assert client.get("/api/nope").status_code == 404
+
+
+def test_unified_search_returns_chains_and_categories(client: TestClient) -> None:
+    results = client.get("/api/search?q=coffee").json()
+    kinds = {(r["kind"], r["key"]) for r in results}
+    assert ("category", "coffee_shop") in kinds
+    cat = next(r for r in results if r["key"] == "coffee_shop")
+    assert cat["display_name"] == "Coffee shop"
+    # Open coffee shops (non-duplicate): sb1, sb2, dk1, dk3, ind.
+    assert cat["n_open"] == 5
+
+
+def test_unified_search_kind_filter(client: TestClient) -> None:
+    assert {r["kind"] for r in client.get("/api/search?q=coffee&kind=chain").json()} <= {"chain"}
+    starbucks = client.get("/api/search?q=starbucks&kind=chain").json()
+    assert starbucks[0]["key"] == "starbucks"
+    assert all(
+        r["kind"] == "category" for r in client.get("/api/search?q=gym&kind=category").json()
+    )
+
+
+def test_unified_search_rejects_bad_kind(client: TestClient) -> None:
+    assert client.get("/api/search?q=coffee&kind=brand").status_code == 422
+
+
+def test_search_falls_back_to_any_word_when_phrase_has_no_match(client: TestClient) -> None:
+    # Real case: "dog daycare" matched nothing; any-word fallback finds "coffee shop" here
+    # for "coffee daycare" (no entry has both words).
+    keys = [r["key"] for r in client.get("/api/search?q=coffee%20daycare").json()]
+    assert "coffee_shop" in keys
+
+
+def test_search_fallback_not_used_when_phrase_matches(client: TestClient) -> None:
+    keys = [r["key"] for r in client.get("/api/search?q=planet%20fitness").json()]
+    assert keys == ["planet fitness"]

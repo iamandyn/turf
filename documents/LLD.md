@@ -51,11 +51,14 @@ The file is written to `turf.duckdb.building`, then renamed, so a reader never s
 
 | Table | Contents |
 |---|---|
-| `places` | Non-duplicate rows only: `id, name, chain_key, basic_category, confidence, status, address, locality, state, postcode, lat, lon`. **Sorted by `chain_key, state`**, so DuckDB's per-block min/max statistics skip everything except the requested chain |
+| `places` | Non-duplicate rows only: `id, name, chain_key, basic_category, category (= taxonomy_primary), confidence, status, address, locality, state, postcode, lat, lon`. **Sorted by `chain_key, state`**, so DuckDB's per-block min/max statistics skip everything except the requested chain. Category filters scan all rows, which still takes about 8 ms |
 | `chains` | `chain_key, display_name, categories, n_total, n_open`; only chains with at least 1 open location |
-| `meta` | `release, schema_version (1), built_at_utc` |
+| `categories` | `category_key` (e.g. `pet_groomer`), `label` ("Pet groomer"), `search_key` ("pet groomer"), `parent` (most common `basic_category`), `n_total, n_open`; only categories with at least 1 open place |
+| `meta` | `release, schema_version (2), built_at_utc` |
 
-Result: 18,226,778 places and 40,026 chains.
+Result: 18,226,778 places, 40,026 chains, and 2,060 categories (1.36 GB).
+
+Schema history: v1 had no categories; **v2** added `places.category` and the `categories` table. Old code runs against a v2 file, but v2 code needs v2 data, so deploy the data first.
 
 ---
 
@@ -147,12 +150,13 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 |---|---|---|---|
 | `GET /healthz` | | `{"status":"ok"}` (runs `SELECT 1`) | |
 | `GET /api/meta` | | `{commit, release, built_at_utc, places, chains}` | |
-| `GET /api/chains/search` | `q` (2–80 chars), `limit` (1–25, default 10) | `[ChainSummary]` | 422 |
+| `GET /api/search` | `q` (2–80 chars), `kind` (`chain`/`category`, optional), `limit` (1–25) | `[SearchResult]`: chains and categories ranked together | 422 |
+| `GET /api/chains/search` | `q` (2–80 chars), `limit` (1–25, default 10) | `[ChainSummary]` (chains only; kept for API users) | 422 |
 | `GET /api/chains/{chain_key}/locations` | `include_unverified` (default false), `state` (2 letters) | `{chain, include_unverified, locations: [Location]}` | 404, 422 |
 | `POST /api/targets` | `TargetRequest` | `TargetResponse` | 404 unknown chain, 422 |
 | `POST /api/targets/export?format=generic\|google_ads_editor` | `TargetRequest` | CSV attachment | 404, 422 |
 
-`ChainSummary = {chain_key, display_name, category, n_open, n_total}`.
+`ChainSummary = {chain_key, display_name, category, n_open, n_total}`. `SearchResult = {kind, key, display_name, detail, n_open, n_total}`, where `detail` is the chain's main category or the category's parent.
 
 **Search ranking** (`search_chains`):
 1. Tier 1: prefix match, *including exact matches*. Exact and prefix share a tier so "orangetheory" ranks Orangetheory Fitness (1,275) above a 3-location chain called "Orangetheory".
@@ -160,7 +164,7 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 3. Tier 3: substring match.
 4. Tier 4: Jaro-Winkler similarity ≥ 0.88, which catches typos like `starbuks`.
 
-Within a tier, chains with more open locations come first.
+Within a tier, entries with more open locations come first. `/api/search` uses the same tiers over chains and categories together. **Fallback:** if a multi-word query matches nothing as a phrase, it returns entries where any word starts a word, ordered by how many words matched, then by size. Real case: "dog daycare" matched nothing; the fallback finds "Lucy's Doggy Daycare and Spa", Dog trainer, Dog park.
 
 ### 3.3 Targets (`targets.py`)
 
@@ -168,7 +172,8 @@ Within a tier, chains with more open locations come first.
 
 | Field | Type / limits | Default |
 |---|---|---|
-| `chain_key` | required | |
+| `chain_key` | competitor chain; **exactly one** of `chain_key` / `category` | |
+| `category` | every business in an Overture category, e.g. `pet_groomer` | |
 | `radius_mi` | 1–50 (Meta Ads Manager's US range) | 1 |
 | `include_unverified` | bool | false |
 | `states` | list of 2-letter codes, upper-cased, deduplicated | all |
@@ -177,18 +182,18 @@ Within a tier, chains with more open locations come first.
 | `campaign_name` | ≤ 200 chars | `Turf - <chain_key>` |
 
 **Algorithm** (one SQL query):
-1. Candidates are the chain's places matching the status and state filters.
+1. Candidates are the chain's (or category's) places matching the status and state filters. They're counted first: more than `MAX_TARGETS` (**25,000**) returns **422 "Pick a state…"**. Nearly every chain fits nationwide (Subway, 22,953 open; Dollar General, 20,572); U-Haul (29,531) and broad categories (restaurants, 280k) need a state.
 2. "Own" locations are **all** of `exclude_chain_key`'s places, *including unverified*: better to skip a target near a store of yours that may be open.
 3. Each candidate's nearest own location is found by haversine distance (miles), prefiltered to a latitude window of `exclude_radius_mi / 69 + 0.01` degrees.
 4. A candidate is excluded if that distance ≤ `exclude_radius_mi`.
 
-`TargetResponse = {chain_key, radius_mi, candidates, excluded_count, targets: [Target], excluded: [{id, name, address, state, nearest_own_location, distance_mi}]}`.
+`TargetResponse = {chain_key, category, radius_mi, candidates, excluded_count, targets: [Target], excluded: [{id, name, address, state, nearest_own_location, distance_mi}]}`.
 
 **CSV formats** (`to_csv`):
 - `google_ads_editor`: header `Campaign,Location`; each row is `<campaign>,(<r>mi:<lat 6dp>:<lon 6dp>)`. The proximity format comes from Google Ads Editor's "Add multiple location targets" help page. The `Campaign` column name is inferred from Editor conventions, not stated on that page. Radius is written with `:g`, so `1` stays `1` and `2.5` stays `2.5`.
 - `generic`: `name,address,city,state,postcode,latitude,longitude,radius,radius_unit,status,overture_id`. Status is `open` or `unverified`.
 
-The filename comes from `chain_key`, which only contains `[a-z0-9 ]`, so it's safe in `Content-Disposition`.
+The filename comes from the chain or category key, reduced to `[a-z0-9-]`, so it's safe in `Content-Disposition`.
 
 **Not done:** merging overlapping circles (see HLD §5).
 
@@ -205,8 +210,8 @@ The filename comes from `chain_key`, which only contains `[a-z0-9 ]`, so it's sa
 
 | Part | What it does |
 |---|---|
-| `state` | target chain, own chain, US state, radius, skip radius, include-unverified; mirrored to the URL (`?chain=&own=&state=&r=&skip=&unverified=1`) by `syncUrl`, restored by `restoreFromUrl` |
-| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over `/api/chains/search`; 200 ms debounce; out-of-order responses dropped |
+| `state` | target (chain or category), own chain, US state, radius, skip radius, include-unverified; mirrored to the URL (`?chain=` or `?cat=`, then `&own=&state=&r=&skip=&unverified=1`) by `syncUrl`, restored by `restoreFromUrl` |
+| `setupCombo` | accessible combobox (ARIA roles, arrow keys/Enter/Escape) over `/api/search` (target: chains and categories; own: `kind=chain`); 200 ms debounce; out-of-order responses dropped |
 | `refresh` | `POST /api/targets`, plus `GET /api/chains/{own}/locations?include_unverified=true` when a skip chain is set; a request counter drops stale responses |
 | map | GeoJSON sources `targets`, `excluded`, `own`. Radius circles are drawn at true scale with a zoom-interpolated `circle-radius` (meters ÷ Web Mercator meters-per-pixel × cos(lat)), so there's no polygon generation even for 17k targets |
 | export | `POST /api/targets/export`, then downloads the blob with the server's filename |

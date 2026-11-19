@@ -6,7 +6,7 @@
 
 Turf turns open Overture Maps data into **ad-ready location target lists for geo-conquesting**: showing ads to people near a competitor's locations.
 
-A user picks a competitor chain (e.g. Orangetheory Fitness), optionally a state and their own chain to exclude, and gets that competitor's US locations as radius targets. Each target is a lat/lng plus a radius, and the list exports as a Google Ads Editor CSV or a generic CSV for Meta and other tools.
+A user picks a competitor chain (e.g. Orangetheory Fitness) or a whole category (e.g. pet boarding: every such business, chains and independents), optionally a state and their own chain to exclude, and gets that competitor's US locations as radius targets. Each target is a lat/lng plus a radius, and the list exports as a Google Ads Editor CSV or a generic CSV for Meta and other tools.
 
 **Users:** media buyers and local marketers running location-based campaigns.
 
@@ -84,5 +84,6 @@ A user picks a competitor chain (e.g. Orangetheory Fitness), optionally a state 
 
 - **Unverified Meta format:** Meta doesn't publish a bulk radius-target file format that we could verify, so the "generic" CSV is deliberately plain.
 - **US territories:** Puerto Rico and other territories aren't covered (LLD §2.1).
-- **Categories:** chain search only covers chain names. Category search ("dog daycare") isn't built yet.
+- **Categories:** search covers Overture's 2,060 fine-grained categories, but not synonyms. "dog daycare" has no category of its own (it's under pet boarding), so search falls back to entries matching any word.
+- **List size:** one list is capped at 25,000 targets; broad categories need a state.
 - **Brand data:** a few odd "chains" appear (e.g. a single city's fire department).

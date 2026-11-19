@@ -55,7 +55,7 @@ def serving_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     con.executemany("INSERT INTO p VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", PLACES)
     con.execute(f"""
-        COPY (SELECT *, id || ' Main St' AS address, 'Austin' AS locality, '78701' AS postcode FROM p)
+        COPY (SELECT *, basic_category AS taxonomy_primary, id || ' Main St' AS address, 'Austin' AS locality, '78701' AS postcode FROM p)
         TO '{d / "places.parquet"}' (FORMAT parquet)
     """)
     con.execute("CREATE TABLE c (chain_key VARCHAR, display_name VARCHAR, categories VARCHAR[])")

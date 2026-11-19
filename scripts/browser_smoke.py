@@ -99,7 +99,26 @@ def main() -> None:
         restored = int(page2.inner_text("#n-targets").replace(",", ""))
         check(restored == n_skip, f"URL restore ({url.split('?', 1)[-1]}): {restored}", problems)
 
-        # 6. Phone layout.
+        # 6. Categories: a too-broad one asks for a state; narrowing it works.
+        cat = browser.new_page(viewport={"width": 1400, "height": 900})
+        # The 422 is expected here; Chrome logs it as "Failed to load resource".
+        cat.on("console", lambda m: None if "status of 422" in m.text else on_console(m))
+        cat.goto(f"{args.base_url}/?cat=pet_groomer", wait_until="networkidle")
+        cat.wait_for_selector("#error:not([hidden])", timeout=15_000)
+        msg = cat.inner_text("#error")
+        check("Pick a state" in msg, f"broad category asks for a state: {msg[:70]}", problems)
+        cat.select_option("#state-select", args.state)
+        cat.wait_for_selector("#summary:not([hidden])", timeout=15_000)
+        wait_idle(cat)
+        n_cat = int(cat.inner_text("#n-targets").replace(",", ""))
+        check(
+            n_cat > 0 and cat.locator("#error").is_hidden(),
+            f"pet groomers in {args.state}: {n_cat}",
+            problems,
+        )
+        cat.screenshot(path=str(out / "04-category.png"))
+
+        # 7. Phone layout.
         phone = browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True)
         phone.on("console", on_console)
         phone.goto(url, wait_until="networkidle")

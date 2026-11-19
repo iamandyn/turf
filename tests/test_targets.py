@@ -5,7 +5,10 @@ from __future__ import annotations
 import csv
 import io
 
+import pytest
 from fastapi.testclient import TestClient
+
+from turf_app import targets
 
 
 def post(client: TestClient, **body: object) -> dict[str, object]:
@@ -137,3 +140,54 @@ def test_export_excludes_same_as_json(client: TestClient) -> None:
 def test_export_rejects_unknown_format(client: TestClient) -> None:
     resp = client.post("/api/targets/export?format=pdf", json={"chain_key": "starbucks"})
     assert resp.status_code == 422
+
+
+# --- Category targets (every business of a kind, chains and independents) ---
+
+
+def test_category_targets_include_independents(client: TestClient) -> None:
+    # coffee_shop open in TX: sb1 (Starbucks), dk1 (Dunkin'), ind (Joe's Coffee, no chain).
+    data = post(client, category="coffee_shop", states=["TX"])
+    assert target_ids(data) == {"sb1", "dk1", "ind"}
+    assert data["category"] == "coffee_shop" and data["chain_key"] is None
+
+
+def test_category_with_own_chain_skips_yours_and_nearby(client: TestClient) -> None:
+    data = post(
+        client,
+        category="coffee_shop",
+        states=["TX"],
+        exclude_chain_key="dunkin",
+        exclude_radius_mi=1,
+    )
+    assert target_ids(data) == {"ind"}  # dk1 is yours (0 mi); sb1 is 0.35 mi from it
+
+
+def test_exactly_one_of_chain_or_category(client: TestClient) -> None:
+    assert client.post("/api/targets", json={}).status_code == 422
+    both = {"chain_key": "starbucks", "category": "coffee_shop"}
+    assert client.post("/api/targets", json=both).status_code == 422
+
+
+def test_unknown_category_404(client: TestClient) -> None:
+    assert client.post("/api/targets", json={"category": "nope"}).status_code == 404
+
+
+def test_too_many_targets_asks_for_a_state(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(targets, "MAX_TARGETS", 2)
+    resp = client.post("/api/targets", json={"category": "coffee_shop"})
+    assert resp.status_code == 422
+    assert "Pick a state" in resp.json()["detail"]
+    # Narrowed to one state it fits again (sb2 + dk3 in CA).
+    assert (
+        client.post("/api/targets", json={"category": "coffee_shop", "states": ["CA"]}).status_code
+        == 200
+    )
+
+
+def test_category_export_filename_and_campaign(client: TestClient) -> None:
+    rows, disposition = export(client, "google_ads_editor", category="coffee_shop", states=["TX"])
+    assert disposition == 'attachment; filename="turf-coffee-shop-google_ads_editor.csv"'
+    assert {r[0] for r in rows[1:]} == {"Turf - coffee_shop"}

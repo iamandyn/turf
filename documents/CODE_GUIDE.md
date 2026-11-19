@@ -57,9 +57,10 @@ turf/
 | **Duplicate detection** | `chains.py` step 5, `street_key` in `normalize.py` | `ChainRules.dup_*` | `test_chains.py`, `test_normalize.py::test_street_key_*` |
 | **State cleanup / fill** | `normalize_state` (`normalize.py`), `states.py` | `scripts/extract_states.py` | `test_states.py`, `test_normalize.py` |
 | **Serving DB schema** | `serving.py` | every SQL query in `api.py` and `targets.py`; bump `SCHEMA_VERSION` | `tests/conftest.py` builds it |
-| **Chain search** (ranking, typos) | `search_chains` in `api.py` | `FUZZY_MIN_SIMILARITY` | `test_api.py::test_search_*` |
+| **Search** (chains + categories, ranking, typos, any-word fallback) | `search` in `api.py` (`_SEARCH_CANDIDATES`); `search_chains` for chains only | `FUZZY_MIN_SIMILARITY` | `test_api.py::test_search_*`, `test_unified_search_*` |
+| **Categories** | `categories` table in `serving.py` | `category` filter in `targets.py`; category label in `web/app.js` | `test_targets.py::test_category_*` |
 | **Chain locations** | `chain_locations` in `api.py` | | `test_api.py::test_locations_*` |
-| **Target lists and exclusions** | `build_targets` in `targets.py` | `TargetRequest` limits | `tests/test_targets.py` |
+| **Target lists and exclusions** | `build_targets` in `targets.py` | `TargetRequest` limits, `MAX_TARGETS` | `tests/test_targets.py` |
 | **CSV export formats** | `to_csv`, `ExportFormat` in `targets.py` | `export_targets` route in `api.py` | `test_targets.py::test_*export*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
 | **Frontend: search box** | `setupCombo` in `web/app.js` | `/api/chains/search` | `scripts/browser_smoke.py` |

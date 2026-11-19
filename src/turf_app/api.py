@@ -7,11 +7,12 @@ Run locally:
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -27,6 +28,8 @@ from turf_app.targets import (
     ExportFormat,
     TargetRequest,
     TargetResponse,
+    TooManyTargetsError,
+    UnknownCategoryError,
     UnknownChainError,
     build_targets,
     to_csv,
@@ -54,6 +57,18 @@ CONTENT_SECURITY_POLICY = "; ".join(
     ]
 )
 
+# Chains and categories as one searchable list; $kind optionally limits it to one.
+_SEARCH_CANDIDATES = """
+    WITH candidates AS (
+        SELECT 'chain' AS kind, chain_key AS key, chain_key AS search_key,
+               display_name, categories[1] AS detail, n_open, n_total
+        FROM chains WHERE $kind IS NULL OR $kind = 'chain'
+        UNION ALL
+        SELECT 'category', category_key, search_key, label, parent, n_open, n_total
+        FROM categories WHERE $kind IS NULL OR $kind = 'category'
+    )
+"""
+
 # Similarity needed for a fuzzy (typo) match, e.g. "starbuks" -> "starbucks".
 FUZZY_MIN_SIMILARITY = 0.88
 
@@ -70,6 +85,15 @@ class ChainSummary(BaseModel):
     chain_key: str
     display_name: str
     category: str | None
+    n_open: int
+    n_total: int
+
+
+class SearchResult(BaseModel):
+    kind: Literal["chain", "category"]
+    key: str
+    display_name: str
+    detail: str | None
     n_open: int
     n_total: int
 
@@ -215,6 +239,59 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             for r in rows
         ]
 
+    @app.get("/api/search")
+    def search(
+        db: Db,
+        q: Annotated[str, Query(min_length=2, max_length=80)],
+        kind: Literal["chain", "category"] | None = None,
+        limit: Annotated[int, Query(ge=1, le=25)] = 10,
+    ) -> list[SearchResult]:
+        """Chains and categories in one ranked list (same tiers as chain search)."""
+        query = normalize_text(q)
+        if len(query) < 2:
+            return []
+        rows = db.execute(
+            _SEARCH_CANDIDATES
+            + """
+            SELECT kind, key, display_name, detail, n_open, n_total FROM (
+                SELECT *,
+                       CASE WHEN starts_with(search_key, $q) THEN 1
+                            WHEN contains(search_key, ' ' || $q) THEN 2
+                            WHEN contains(search_key, $q) THEN 3
+                            ELSE 4 END AS tier,
+                       jaro_winkler_similarity(search_key, $q) AS sim
+                FROM candidates
+            )
+            WHERE tier < 4 OR sim >= $min_sim
+            ORDER BY tier, n_open DESC, sim DESC
+            LIMIT $limit
+            """,
+            {"q": query, "kind": kind, "min_sim": FUZZY_MIN_SIMILARITY, "limit": limit},
+        ).fetchall()
+        tokens = query.split()
+        if not rows and len(tokens) > 1:
+            # Nothing matched the whole phrase ("dog daycare"): fall back to
+            # entries where any word starts a word, most words matched first.
+            # Tokens are normalized to [a-z0-9], so they're safe in a regex.
+            rows = db.execute(
+                _SEARCH_CANDIDATES
+                + """
+                SELECT kind, key, display_name, detail, n_open, n_total FROM (
+                    SELECT *,
+                           len(list_filter(
+                               $tokens, lambda t: regexp_matches(search_key, '(^| )' || t)
+                           )) AS hits
+                    FROM candidates
+                )
+                WHERE hits > 0
+                ORDER BY hits DESC, n_open DESC
+                LIMIT $limit
+                """,
+                {"tokens": tokens, "kind": kind, "limit": limit},
+            ).fetchall()
+        fields = list(SearchResult.model_fields)
+        return [SearchResult(**dict(zip(fields, r, strict=True))) for r in rows]
+
     @app.get("/api/chains/{chain_key}/locations")
     def chain_locations(
         db: Db,
@@ -262,6 +339,10 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
             return build_targets(db, req)
         except UnknownChainError as e:
             raise HTTPException(status_code=404, detail=f"Unknown chain: {e}") from e
+        except UnknownCategoryError as e:
+            raise HTTPException(status_code=404, detail=f"Unknown category: {e}") from e
+        except TooManyTargetsError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
 
     @app.post("/api/targets")
     def targets(db: Db, req: TargetRequest) -> TargetResponse:
@@ -272,8 +353,9 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         db: Db, req: TargetRequest, format: ExportFormat = ExportFormat.generic
     ) -> Response:
         result = _targets_or_404(db, req)
-        campaign = req.campaign_name or f"Turf - {req.chain_key}"
-        slug = req.chain_key.replace(" ", "-")
+        campaign = req.campaign_name or f"Turf - {req.target_key}"
+        # Keep the filename header safe whatever the key contains.
+        slug = re.sub(r"[^a-z0-9]+", "-", req.target_key.lower()).strip("-") or "targets"
         return Response(
             content=to_csv(result, format, campaign),
             media_type="text/csv; charset=utf-8",

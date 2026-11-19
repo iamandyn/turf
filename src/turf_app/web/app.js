@@ -18,8 +18,8 @@ const METERS_PER_MILE = 1609.344;
 const LIST_LIMIT = 300;  // rows shown in the sidebar list; the map and exports have all of them
 
 const state = {
-  target: null,       // ChainSummary
-  own: null,          // ChainSummary
+  target: null,       // SearchResult: a chain, or a category (every business of a kind)
+  own: null,          // SearchResult with kind "chain": the user's own locations
   usState: "",
   radiusMi: 1,
   ownRadiusMi: 1,
@@ -63,11 +63,12 @@ const postJson = async (path, body) =>
 
 function targetRequest() {
   return {
-    chain_key: state.target.chain_key,
+    chain_key: state.target.kind === "chain" ? state.target.key : null,
+    category: state.target.kind === "category" ? state.target.key : null,
     radius_mi: state.radiusMi,
     include_unverified: state.unverified,
     states: state.usState ? [state.usState] : null,
-    exclude_chain_key: state.own ? state.own.chain_key : null,
+    exclude_chain_key: state.own ? state.own.key : null,
     exclude_radius_mi: state.ownRadiusMi,
     campaign_name: $("campaign").value.trim() || null,
   };
@@ -75,7 +76,8 @@ function targetRequest() {
 
 // ---------- Chain search (accessible combobox) ----------
 
-function setupCombo(inputId, listId, onPick) {
+// kind: null for chains and categories, "chain" for chains only.
+function setupCombo(inputId, listId, kind, onPick) {
   const input = $(inputId);
   const list = $(listId);
   let items = [];
@@ -107,7 +109,9 @@ function setupCombo(inputId, listId, onPick) {
       name.textContent = c.display_name;
       const meta = document.createElement("span");
       meta.className = "meta";
-      meta.textContent = `${fmt.format(c.n_open)} open`;
+      meta.textContent = c.kind === "category"
+        ? `category · ${fmt.format(c.n_open)} open`
+        : `${fmt.format(c.n_open)} open`;
       li.append(name, meta);
       li.addEventListener("mousedown", (e) => { e.preventDefault(); pick(i); });
       list.append(li);
@@ -132,7 +136,8 @@ function setupCombo(inputId, listId, onPick) {
     timer = setTimeout(async () => {
       const mine = ++seq;
       try {
-        const results = await getJson(`/api/chains/search?q=${encodeURIComponent(q)}&limit=8`);
+        const results = await getJson(
+          `/api/search?q=${encodeURIComponent(q)}&limit=8` + (kind ? `&kind=${kind}` : ""));
         if (mine !== seq) return;
         items = results;
         active = items.length ? 0 : -1;
@@ -164,9 +169,10 @@ function renderSelected(boxId, chain, onClear) {
   const meta = document.createElement("div");
   meta.className = "meta";
   const unverified = chain.n_total - chain.n_open;
-  meta.textContent = `${fmt.format(chain.n_open)} open locations` +
+  const kindLabel = chain.kind === "category" ? "Every business in this category · " : "";
+  meta.textContent = kindLabel + `${fmt.format(chain.n_open)} open` +
     (unverified ? ` · ${fmt.format(unverified)} unverified` : "") +
-    (chain.category ? ` · ${chain.category.replaceAll("_", " ")}` : "");
+    (chain.kind === "chain" && chain.detail ? ` · ${chain.detail.replaceAll("_", " ")}` : "");
   text.append(name, meta);
   const clear = document.createElement("button");
   clear.type = "button";
@@ -343,7 +349,7 @@ async function refresh({ fit = false } = {}) {
   $("loading").hidden = false;
   try {
     const ownPromise = state.own
-      ? getJson(`/api/chains/${encodeURIComponent(state.own.chain_key)}/locations?include_unverified=true` +
+      ? getJson(`/api/chains/${encodeURIComponent(state.own.key)}/locations?include_unverified=true` +
           (state.usState ? `&state=${state.usState}` : ""))
       : Promise.resolve(null);
     const [result, own] = await Promise.all([postJson("/api/targets", targetRequest()), ownPromise]);
@@ -364,7 +370,7 @@ async function refresh({ fit = false } = {}) {
     $("summary-detail").textContent = parts.join(" · ");
     $("summary").hidden = false;
     $("export").hidden = result.targets.length === 0;
-    if (!$("campaign").value) $("campaign").placeholder = `Turf - ${state.target.chain_key}`;
+    if (!$("campaign").value) $("campaign").placeholder = `Turf - ${state.target.key}`;
     if (result.targets.length === 0) {
       showError(result.candidates
         ? "Every location is near one of yours. Lower the skip distance to keep some."
@@ -373,7 +379,14 @@ async function refresh({ fit = false } = {}) {
     renderList(result.targets);
     if (fit) fitTo(result.targets.length ? result.targets : (own ? own.locations : []));
   } catch (err) {
-    if (mine === requestSeq) showError(err.message);
+    if (mine !== requestSeq) return;
+    // Don't leave the previous results next to the error.
+    lastResult = null;
+    $("summary").hidden = true;
+    $("export").hidden = true;
+    $("list-section").hidden = true;
+    for (const id of ["targets", "excluded"]) map.getSource(id).setData(toFeatures([]));
+    showError(err.message);
   } finally {
     if (mine === requestSeq) $("loading").hidden = true;
   }
@@ -409,8 +422,8 @@ async function exportCsv(format, button) {
 
 function syncUrl() {
   const p = new URLSearchParams();
-  if (state.target) p.set("chain", state.target.chain_key);
-  if (state.own) p.set("own", state.own.chain_key);
+  if (state.target) p.set(state.target.kind === "category" ? "cat" : "chain", state.target.key);
+  if (state.own) p.set("own", state.own.key);
   if (state.usState) p.set("state", state.usState);
   if (state.radiusMi !== 1) p.set("r", String(state.radiusMi));
   if (state.own && state.ownRadiusMi !== 1) p.set("skip", String(state.ownRadiusMi));
@@ -419,9 +432,9 @@ function syncUrl() {
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
 }
 
-async function chainByKey(key) {
-  const results = await getJson(`/api/chains/search?q=${encodeURIComponent(key)}&limit=5`);
-  return results.find((c) => c.chain_key === key) || null;
+async function lookup(kind, key) {
+  const results = await getJson(`/api/search?q=${encodeURIComponent(key)}&kind=${kind}&limit=10`);
+  return results.find((r) => r.key === key) || null;
 }
 
 async function restoreFromUrl() {
@@ -433,8 +446,9 @@ async function restoreFromUrl() {
   const st = (p.get("state") || "").toUpperCase();
   state.usState = STATES.some(([c]) => c === st) ? st : "";
   try {
-    if (p.get("chain")) state.target = await chainByKey(p.get("chain"));
-    if (p.get("own")) state.own = await chainByKey(p.get("own"));
+    if (p.get("chain")) state.target = await lookup("chain", p.get("chain"));
+    else if (p.get("cat")) state.target = await lookup("category", p.get("cat"));
+    if (p.get("own")) state.own = await lookup("chain", p.get("own"));
   } catch (err) {
     showError(err.message);
   }
@@ -469,12 +483,12 @@ function init() {
   const select = $("state-select");
   for (const [code, name] of STATES) select.add(new Option(name, code));
 
-  setupCombo("target-input", "target-results", (c) => { state.target = c; update({ fit: true }); });
-  setupCombo("own-input", "own-results", (c) => { state.own = c; update(); });
+  setupCombo("target-input", "target-results", null, (c) => { state.target = c; update({ fit: true }); });
+  setupCombo("own-input", "own-results", "chain", (c) => { state.own = c; update(); });
 
   document.querySelectorAll("#examples button").forEach((b) => b.addEventListener("click", async () => {
     try {
-      const c = await chainByKey(b.dataset.chain);
+      const c = await lookup(b.dataset.kind || "chain", b.dataset.key);
       if (c) { state.target = c; update({ fit: true }); }
     } catch (err) { showError(err.message); }
   }));

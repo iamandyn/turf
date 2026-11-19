@@ -4,6 +4,8 @@ Fails on any console error, page error, CSP violation, or accessibility
 violation (axe-core), and walks the main flow: pick an audience preset, edit
 its signals, add best-performing metros, read a metro's details and brief,
 export both CSVs, reload from the shareable URL, change the population filter,
+load a sample brand's results (signal check, recommendations, export), upload
+an ad report,
 toggle map layers, switch to dark mode, and check the phone layout. Saves
 screenshots.
 
@@ -23,7 +25,7 @@ import sys
 from pathlib import Path
 
 from axe_playwright_python.sync_playwright import Axe
-from playwright.sync_api import ConsoleMessage, Page, sync_playwright
+from playwright.sync_api import ConsoleMessage, FilePayload, Page, sync_playwright
 
 
 def main() -> None:
@@ -160,6 +162,67 @@ def main() -> None:
         detail = page.inner_text("#summary-detail")
         check("1M+" in detail, f"population filter: {detail.split(' · ')[-1]}", problems)
 
+        # 7b. A sample brand's results: best markets, signal check, recommendations.
+        brand = new_page(accept_downloads=True)
+        brand.goto(args.base_url, wait_until="networkidle")
+        brand.wait_for_selector(".sample", timeout=10_000)
+        brand.click('#top-samples .sample[data-key="pets"]')
+        wait_results(brand)
+        brand.wait_for_selector("#brand-body:not([hidden])")
+        verdict = brand.inner_text("#check-badge")
+        n_best = brand.locator("#best-chips li").count()
+        tags = brand.locator("#results .status-tag").count()
+        check(
+            brand.locator("#synthetic-note").is_visible()
+            and n_best == 5
+            and verdict in ("Yes", "Partly", "No evidence")
+            and tags == count(brand)
+            and "sample=pets" in brand.url,
+            f"sample brand: verdict {verdict!r}, {n_best} best markets, {tags} recommendations",
+            problems,
+        )
+        with brand.expect_download() as dl:
+            brand.click('.export button[data-format="metros"]')
+        brand_header = Path(dl.value.path()).read_text().splitlines()[0]
+        check(
+            brand_header.endswith("brand_status"),
+            f"brand export: {dl.value.suggested_filename}",
+            problems,
+        )
+        brand.screenshot(path=str(out / "05-brand.png"))
+        check_a11y(brand, "brand results", problems)
+        # The sample with no real relationship says so.
+        brand.click("#brand-clear")
+        wait_results(brand)
+        brand.click('#top-samples .sample[data-key="beauty_wellness"]')
+        wait_results(brand)
+        brand.wait_for_selector("#brand-body:not([hidden])")
+        weak = brand.inner_text("#check-badge")
+        check(weak == "No evidence", f"no-relationship sample: verdict {weak!r}", problems)
+
+        # 7c. Upload an ad report (metro names, one row that won't match).
+        upload = new_page()
+        upload.goto(f"{args.base_url}/?preset={args.preset}", wait_until="networkidle")
+        wait_results(upload)
+        lines = ["Market,Amount spent (USD),Purchases,Purchases conversion value"]
+        for i, market in enumerate(UPLOAD_MARKETS):
+            lines.append(f'"{market}",{1000 + 50 * i},{20 + i},{1500 + 120 * i}')
+        lines.append('"Atlantis, ZZ",100,1,50')
+        report: FilePayload = {
+            "name": "report.csv",
+            "mimeType": "text/csv",
+            "buffer": ("\n".join(lines) + "\n").encode(),
+        }
+        upload.set_input_files("#results-file", files=[report])
+        upload.wait_for_selector("#brand-body:not([hidden])", timeout=15_000)
+        meta = upload.inner_text("#brand-meta")
+        check(
+            f"{len(UPLOAD_MARKETS)} of {len(UPLOAD_MARKETS) + 1} rows matched" in meta
+            and "Atlantis" in meta,
+            f"uploaded report: {meta[:80]}",
+            problems,
+        )
+
         # 8. Layer toggles.
         toggle = page.locator('.legend button[data-layer="seeds"]')
         toggle.click()
@@ -194,6 +257,13 @@ def main() -> None:
             print(f"  - {p}")
         sys.exit(1)
     print("all checks passed")
+
+
+# Markets as an ad platform labels them; all should match a metro.
+UPLOAD_MARKETS = [
+    "Denver, CO", "Austin, TX", "Seattle, WA", "Portland OR", "Boston, MA", "Atlanta, GA",
+    "Chicago, IL", "Phoenix, AZ", "Dallas, TX", "Minneapolis, MN", "Raleigh, NC", "Nashville, TN",
+]  # fmt: skip
 
 
 def wait_results(page: Page) -> None:

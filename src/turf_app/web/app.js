@@ -14,8 +14,11 @@ const state = {
   minPopulation: 250000,
   micro: false,
   selected: null,     // metro code shown in the detail panel
+  brand: null,        // the brand's results: {name, synthetic, sampleKey, fileName, rows, geo_type, kpi}
 };
 let presets = [];     // from /api/presets
+let samples = [];     // from /api/samples
+let lastBrand = null; // the last /api/performance response
 let lastResult = null;
 let requestSeq = 0;   // drops responses that arrive after a newer request
 
@@ -67,7 +70,233 @@ function marketRequest() {
   };
 }
 
+function performanceRequest() {
+  const m = marketRequest();
+  return {
+    rows: state.brand.rows, geo_type: state.brand.geo_type, kpi: state.brand.kpi,
+    preset: m.preset, categories: m.categories, use_growth: m.use_growth,
+    min_population: m.min_population, include_micro: m.include_micro, limit: m.limit,
+  };
+}
+
 const hasSignals = () => state.signals.length > 0 || state.growth;
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const kpiText = (kpi, value) => value === null ? "n/a"
+  : kpi === "roas" ? `${value.toFixed(2)}x ROAS` : `${money.format(value)} CPA`;
+
+// ---------- Brand results: CSV upload ----------
+
+// Minimal CSV parser: quoted fields, doubled quotes, comma / semicolon / tab.
+function parseCsv(text) {
+  const firstLine = text.slice(0, text.indexOf("\n") >>> 0);
+  const delim = [",", ";", "\t"].sort((a, b) => firstLine.split(b).length - firstLine.split(a).length)[0];
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === delim) { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.some((v) => v.trim())) rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field);
+  if (row.some((v) => v.trim())) rows.push(row);
+  return rows;
+}
+
+const MAX_RESULT_ROWS = 20000;  // matches MAX_ROWS in performance.py
+
+// Column names ad platforms use (Meta Ads Manager, Google Ads geo reports, generic exports).
+const COLUMNS = {
+  zip: ["zip", "zipcode", "zip code", "postal code", "postcode", "postal"],
+  geo: ["metro", "market", "dma", "designated market area", "metro area", "city", "location", "region name", "geo", "area"],
+  state: ["state", "region", "state code", "province"],
+  spend: ["spend", "cost", "amount spent", "amount spent usd", "spend usd", "cost usd", "media cost"],
+  conversions: ["conversions", "purchases", "results", "leads", "installs", "app installs", "signups", "sign ups", "orders", "subscriptions"],
+  revenue: ["revenue", "conversion value", "conv value", "total conv value", "purchase value", "purchases conversion value", "value", "sales"],
+};
+
+// Returns {rows, geo_type, kpi} or throws an Error with a message for the user.
+function parseResults(text) {
+  const table = parseCsv(text.replace(/^\uFEFF/, ""));
+  if (table.length < 2) throw new Error("That file has no data rows.");
+  const norm = (h) => h.toLowerCase().replace(/[()$.,]/g, "").replace(/[_-]/g, " ").replace(/\s+/g, " ").trim();
+  const header = table[0].map(norm);
+  const find = (names) => header.findIndex((h) => names.includes(h));
+  const zip = find(COLUMNS.zip), geo = find(COLUMNS.geo), stateCol = find(COLUMNS.state);
+  const spend = find(COLUMNS.spend), conv = find(COLUMNS.conversions), rev = find(COLUMNS.revenue);
+  if (zip < 0 && geo < 0) throw new Error("Couldn't find a location column. Name it \"zip\", or \"market\" with values like \"Austin, TX\".");
+  if (spend < 0) throw new Error("Couldn't find a spend column (\"spend\", \"cost\" or \"amount spent\").");
+  if (conv < 0 && rev < 0) throw new Error("Couldn't find conversions or revenue (\"conversions\", \"purchases\", \"revenue\", \"conversion value\"...).");
+  const num = (v) => { const n = Number(String(v ?? "").replace(/[$,\s]/g, "")); return Number.isFinite(n) && n >= 0 ? n : null; };
+  const rows = [];
+  for (const r of table.slice(1)) {
+    let where = zip >= 0 ? (r[zip] || "").trim() : (r[geo] || "").trim();
+    // Separate city and state columns (common in Google Ads geo reports).
+    if (zip < 0 && stateCol >= 0 && stateCol !== geo && where && !where.includes(",") && r[stateCol]) where = `${where}, ${r[stateCol].trim()}`;
+    const s = num(r[spend]);
+    if (!where || s === null) continue;
+    rows.push({ geo: where.slice(0, 120), spend: s, conversions: conv >= 0 ? num(r[conv]) : null, revenue: rev >= 0 ? num(r[rev]) : null });
+  }
+  if (!rows.length) throw new Error("No rows had a location and a spend amount.");
+  if (rows.length > MAX_RESULT_ROWS) throw new Error(`That's ${fmt.format(rows.length)} rows; the limit is ${fmt.format(MAX_RESULT_ROWS)}. Aggregate by market or ZIP first.`);
+  const kpi = rev >= 0 && rows.some((r) => r.revenue) ? "roas" : "cpa";
+  return { rows, geo_type: zip >= 0 ? "zip" : "metro", kpi };
+}
+
+function showUploadError(message) {
+  const el = $("upload-error");
+  el.textContent = message || "";
+  el.hidden = !message;
+}
+
+async function onResultsFile(file) {
+  if (!file) return;
+  showUploadError("");
+  if (file.size > 10 * 1024 * 1024) { showError("That file is over 10 MB. Aggregate it by market or ZIP first."); return; }
+  try {
+    const parsed = parseResults(await file.text());
+    state.brand = { name: file.name, synthetic: false, sampleKey: null, fileName: file.name, ...parsed };
+    update({ fit: true });
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    $("results-file").value = "";
+  }
+}
+
+async function loadSample(key) {
+  try {
+    const sample = await getJson(`/api/samples/${key}`);
+    const preset = presets.find((p) => p.key === sample.preset);
+    state.brand = { name: sample.name, synthetic: true, sampleKey: key, fileName: null,
+                    rows: sample.rows, geo_type: sample.geo_type, kpi: sample.kpi, description: sample.description };
+    if (preset) { state.preset = preset.key; state.signals = [...preset.categories]; }
+    state.selected = null;
+    await update({ fit: true });
+    $("brand-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function clearBrand() {
+  state.brand = null;
+  lastBrand = null;
+  state.selected = null;
+  update({ fit: true });
+}
+
+function downloadBrandCsv() {
+  if (!state.brand) return;
+  const header = state.brand.geo_type === "zip" ? "zip" : "market";
+  const esc = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replaceAll('"', '""')}"` : String(v ?? ""));
+  const lines = [`${header},spend,conversions,revenue`,
+    ...state.brand.rows.map((r) => [r.geo, r.spend, r.conversions ?? "", r.revenue ?? ""].map(esc).join(","))];
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+  a.download = `${(state.brand.sampleKey ? `turf-sample-${state.brand.sampleKey}` : "results")}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function renderSampleButtons() {
+  for (const id of ["top-samples", "sample-buttons"]) {
+    const box = $(id);
+    box.innerHTML = "";
+    for (const smp of samples) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sample";
+      b.dataset.key = smp.key;
+      b.setAttribute("aria-pressed", String(state.brand?.sampleKey === smp.key));
+      b.textContent = smp.name.replace(/^Sample /, "");
+      b.title = smp.description;
+      b.addEventListener("click", () => loadSample(smp.key));
+      box.append(b);
+    }
+  }
+}
+
+function renderBrand() {
+  const b = state.brand;
+  $("manual-seeds").hidden = Boolean(b);
+  $("brand-card").hidden = !b;
+  if (!b) return;
+  $("brand-name").textContent = b.name;
+  $("synthetic-note").hidden = !b.synthetic;
+  const r = lastBrand;
+  $("brand-body").hidden = !r;
+  if (!r) { $("brand-meta").textContent = `${fmt.format(b.rows.length)} rows · ${b.kpi.toUpperCase()}`; return; }
+  const metros = r.metros.length;
+  $("brand-meta").textContent = `${fmt.format(r.matched_rows)} of ${fmt.format(r.rows)} rows matched to ${fmt.format(metros)} metros · ${money.format(r.total_spend)} spend · ${r.kpi === "roas" ? "ROAS (higher is better)" : "CPA (lower is better)"}`
+    + (r.unmatched_examples.length ? ` · unmatched e.g. ${r.unmatched_examples.slice(0, 3).join("; ")}` : "");
+  const best = $("best-chips");
+  best.innerHTML = "";
+  for (const m of r.metros.filter((x) => x.best)) {
+    const li = document.createElement("li");
+    li.className = "chip seed";
+    const span = document.createElement("span");
+    span.textContent = `${m.name.split(",")[0].split("-")[0]} · ${kpiText(r.kpi, m.kpi)}`;
+    span.title = m.name;
+    li.append(span);
+    best.append(li);
+  }
+  const verdictLabel = { strong: "Yes", moderate: "Partly", weak: "No evidence", too_few: "Not enough data" };
+  const badge = $("check-badge");
+  badge.textContent = verdictLabel[r.check.verdict];
+  badge.className = `badge ${r.check.verdict}`;
+  $("check-summary").textContent = r.check.summary;
+  const ul = $("check-signals");
+  ul.innerHTML = "";
+  for (const f of r.check.signals) {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "bar-label";
+    name.textContent = f.label;
+    const track = document.createElement("span");
+    track.className = "bar-track centered";
+    const fill = document.createElement("span");
+    fill.className = f.rho >= 0 ? "bar-fill up" : "bar-fill";
+    const width = Math.min(50, Math.abs(f.rho) * 50);
+    fill.style.width = `${width}%`;
+    fill.style.marginLeft = f.rho >= 0 ? "50%" : `${50 - width}%`;
+    track.append(fill);
+    const value = document.createElement("span");
+    value.className = "bar-value";
+    value.textContent = `${f.rho >= 0 ? "+" : ""}${f.rho.toFixed(2)}`;
+    value.title = f.weight ? "Used to weight recommendations" : "Not used: doesn't track results";
+    li.append(name, track, value);
+    ul.append(li);
+  }
+  $("kpi-col").textContent = r.kpi === "roas" ? "ROAS" : "CPA";
+  $("best-note").textContent = `${r.kpi === "roas" ? "Highest ROAS" : "Lowest CPA"} among metros with at least 1% of spend`;
+  $("brand-table-title").textContent = `All ${fmt.format(metros)} metros in the results`;
+  const tbody = $("brand-rows");
+  tbody.innerHTML = "";
+  for (const m of r.metros) {
+    const tr = document.createElement("tr");
+    if (!m.trusted) tr.className = "muted";
+    const cells = [m.name + (m.best ? " ★" : ""), money.format(m.spend), m.trusted ? kpiText(r.kpi, m.kpi).split(" ")[0] : "low spend"];
+    cells.forEach((text, i) => {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (i) td.className = "num-col";
+      tr.append(td);
+    });
+    tbody.append(tr);
+  }
+}
 const presetLabel = () => (presets.find((p) => p.key === state.preset) || {}).label || "Custom audience";
 
 // ---------- Accessible combobox ----------
@@ -270,6 +499,7 @@ function themeLayerPaint() {
   return {
     "results-circle": { "circle-color": accent, "circle-stroke-color": panel },
     "seeds-circle": { "circle-color": own, "circle-stroke-color": panel },
+    "current-circle": { "circle-color": panel, "circle-stroke-color": cssVar("--skip") },
     "selected-ring": { "circle-stroke-color": text },
   };
 }
@@ -281,7 +511,7 @@ function applyLayerTheme() {
   }
 }
 
-const OUR_SOURCES = ["results", "seeds", "selected"];
+const OUR_SOURCES = ["current", "results", "seeds", "selected"];
 let mapTheme = currentTheme();
 
 // Swap the basemap, carrying our sources (with their data) and layers over.
@@ -354,6 +584,13 @@ async function setupLayers() {
   const empty = { type: "FeatureCollection", features: [] };
   for (const id of OUR_SOURCES) map.addSource(id, { type: "geojson", data: empty });
   map.addLayer({
+    id: "current-circle", type: "circle", source: "current",
+    paint: {
+      "circle-radius": ["*", sizeByPopulation, 0.6], "circle-color": "#ffffff", "circle-opacity": 0.9,
+      "circle-stroke-color": "#9aa0a6", "circle-stroke-width": 1.5,
+    },
+  });
+  map.addLayer({
     id: "results-circle", type: "circle", source: "results",
     paint: {
       "circle-radius": sizeByPopulation, "circle-color": "#e4572e", "circle-opacity": 0.75,
@@ -382,7 +619,7 @@ async function setupLayers() {
   }
 }
 
-const LAYER_GROUPS = { results: ["results-circle"], seeds: ["seeds-circle"] };
+const LAYER_GROUPS = { results: ["results-circle"], seeds: ["seeds-circle"], current: ["current-circle"] };
 
 function setLayerVisible(group, visible) {
   for (const id of LAYER_GROUPS[group]) map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
@@ -439,15 +676,29 @@ function renderResults(result) {
       tag.textContent = `${x.label} ${ratioText(x)}`;
       reasons.append(tag);
     }
+    const status = brandStatus(r.metro_code);
+    if (status) {
+      const tag = document.createElement("span");
+      tag.className = "status-tag";
+      tag.textContent = status;
+      head.append(tag);
+    }
     li.append(head, meta, reasons);
     const go = () => selectMetro(r.metro_code);
     li.addEventListener("click", go);
     li.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
     ol.append(li);
   }
-  $("results-title").textContent = result.mode === "lookalike"
-    ? "Closest to your best markets" : "Strongest signals";
+  $("results-title").textContent = lastBrand ? "Recommended next markets"
+    : result.mode === "lookalike" ? "Closest to your best markets" : "Strongest signals";
   $("results-section").hidden = result.results.length === 0;
+}
+
+function brandStatus(code) {
+  if (!lastBrand) return null;
+  const s = lastBrand.status.find((x) => x.metro_code === code);
+  if (!s) return null;
+  return s.status === "low_spend" ? `low spend (${money.format(s.spend)})` : "not running yet";
 }
 
 function findMetro(code) {
@@ -466,10 +717,12 @@ async function selectMetro(code, { fly = true } = {}) {
   const panel = $("detail");
   if (!r) { panel.hidden = true; return; }
   const isSeed = lastResult.seeds.some((s) => s.metro_code === code);
+  const brandMetro = lastBrand && lastBrand.metros.find((m) => m.metro_code === code);
   $("detail-rank").textContent = isSeed ? "One of your best markets"
     : lastResult.mode === "lookalike" ? `#${r.rank} · ${r.match}% match to your best markets` : `#${r.rank} by signal strength`;
   $("detail-title").textContent = r.name;
-  $("detail-meta").textContent = `${r.kind === "metro" ? "Metropolitan" : "Micropolitan"} area · ${fmt.format(r.population)} people (2025) · ${r.growth_pct >= 0 ? "+" : ""}${r.growth_pct.toFixed(1)}% since 2020 · ${fmt.format(r.zip_count)} ZIP codes`;
+  $("detail-meta").textContent = `${r.kind === "metro" ? "Metropolitan" : "Micropolitan"} area · ${fmt.format(r.population)} people (2025) · ${r.growth_pct >= 0 ? "+" : ""}${r.growth_pct.toFixed(1)}% since 2020 · ${fmt.format(r.zip_count)} ZIP codes`
+    + (brandMetro ? ` · brand: ${money.format(brandMetro.spend)} spend, ${kpiText(lastBrand.kpi, brandMetro.kpi)}` : brandStatus(code) ? ` · brand: ${brandStatus(code)}` : "");
   renderBars(r);
   panel.hidden = false;
   if (fly) map.fitBounds([[r.bounds[0], r.bounds[1]], [r.bounds[2], r.bounds[3]]], { padding: 80, maxZoom: 9, duration: 600 });
@@ -548,7 +801,7 @@ async function refresh({ fit = false } = {}) {
   showError("");
   const ready = hasSignals();
   $("empty-state").hidden = ready;
-  document.querySelector('.legend [data-layer="seeds"]').hidden = state.seeds.length === 0;
+  document.querySelector('.legend [data-layer="seeds"]').hidden = state.seeds.length === 0 && !state.brand;
   if (!ready) {
     lastResult = null;
     $("summary").hidden = true;
@@ -557,25 +810,41 @@ async function refresh({ fit = false } = {}) {
     $("detail").hidden = true;
     await mapReady;
     for (const id of OUR_SOURCES) map.getSource(id).setData(toFeatures([]));
-    if (state.preset === "custom") showError("Add at least one signal, or use population growth.");
+    if (state.brand) showError("Pick an audience in step 1 to analyze these results.");
+    else if (state.preset === "custom") showError("Add at least one signal, or use population growth.");
     return;
   }
 
   const mine = ++requestSeq;
   $("loading").hidden = false;
   try {
-    const result = await postJson("/api/markets", marketRequest());
-    if (mine !== requestSeq) return;
+    let result;
+    if (state.brand) {
+      const brand = await postJson("/api/performance", performanceRequest());
+      if (mine !== requestSeq) return;
+      lastBrand = brand;
+      result = brand.recommendations;
+    } else {
+      result = await postJson("/api/markets", marketRequest());
+      if (mine !== requestSeq) return;
+      lastBrand = null;
+    }
     lastResult = result;
+    renderBrand();
     await mapReady;
     map.getSource("results").setData(toFeatures(result.results));
     map.getSource("seeds").setData(toFeatures(result.seeds));
+    const current = lastBrand ? lastBrand.metros.filter((m) => !m.best)
+      .map((m) => ({ ...m, population: 400000, rank: 0 })) : [];
+    map.getSource("current").setData(toFeatures(current));
+    document.querySelector('.legend [data-layer="current"]').hidden = current.length === 0;
 
     $("n-results").textContent = fmt.format(result.results.length);
-    $("summary-unit").textContent = result.mode === "lookalike" ? "lookalike metros" : "top metros";
+    $("summary-unit").textContent = lastBrand ? "recommended metros" : result.mode === "lookalike" ? "lookalike metros" : "top metros";
     const seedNames = result.seeds.map((s) => s.name.split(",")[0].split("-")[0]);
     const detail = [`${presetLabel()}, ${result.signals.length} signals`];
-    detail.push(result.mode === "lookalike"
+    if (lastBrand) detail.splice(0, 1, `${state.brand.name}: lookalikes of its ${seedNames.length} best markets, where it isn't spending yet`);
+    else detail.push(result.mode === "lookalike"
       ? `closest to ${seedNames.length <= 2 ? seedNames.join(" and ") : `${seedNames.length} best markets`}`
       : "ranked by signal strength");
     detail.push(`out of ${fmt.format(result.universe)} metros with ${compact.format(state.minPopulation)}+ people`);
@@ -589,6 +858,8 @@ async function refresh({ fit = false } = {}) {
   } catch (err) {
     if (mine !== requestSeq) return;
     lastResult = null;
+    lastBrand = null;
+    renderBrand();
     $("summary").hidden = true;
     $("export").hidden = true;
     $("results-section").hidden = true;
@@ -606,8 +877,9 @@ async function exportCsv(format, button) {
   button.disabled = true;
   showError("");
   try {
-    const resp = await api(`/api/markets/export?format=${format}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(marketRequest()),
+    const [path, body] = state.brand ? ["/api/performance/export", performanceRequest()] : ["/api/markets/export", marketRequest()];
+    const resp = await api(`${path}?format=${format}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     const blob = await resp.blob();
     const match = /filename="([^"]+)"/.exec(resp.headers.get("Content-Disposition") || "");
@@ -635,6 +907,7 @@ function syncUrl() {
   for (const s of state.seeds) p.append("seed", s.key);
   if (state.minPopulation !== 250000) p.set("minpop", String(state.minPopulation));
   if (state.micro) p.set("micro", "1");
+  if (state.brand?.sampleKey) p.set("sample", state.brand.sampleKey);
   if (state.selected) p.set("metro", state.selected);
   const qs = p.toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
@@ -656,6 +929,17 @@ async function restoreFromUrl() {
   state.seeds = seeds.filter(Boolean);
   const metro = p.get("metro");
   state.selected = metro && /^[0-9]{5}$/.test(metro) ? metro : null;
+  const sampleKey = p.get("sample");
+  if (sampleKey && samples.some((x) => x.key === sampleKey)) {
+    try {
+      const sample = await getJson(`/api/samples/${sampleKey}`);
+      state.brand = { name: sample.name, synthetic: true, sampleKey, fileName: null,
+                      rows: sample.rows, geo_type: sample.geo_type, kpi: sample.kpi };
+      // A bare ?sample= link uses the sample's own audience.
+      const preset = presets.find((x) => x.key === sample.preset);
+      if (!state.preset && preset) { state.preset = preset.key; state.signals = [...preset.categories]; }
+    } catch (err) { showError(err.message); }
+  }
   $("min-pop").value = String(state.minPopulation);
   $("micro").checked = state.micro;
 }
@@ -666,6 +950,8 @@ function renderControls() {
   renderPresets();
   renderSignals();
   renderSeeds();
+  renderSampleButtons();
+  renderBrand();
 }
 
 async function update(opts = { fit: true }) {
@@ -691,6 +977,9 @@ function init() {
   $("min-pop").addEventListener("change", (e) => { state.minPopulation = Number(e.target.value); update({ fit: true }); });
   $("micro").addEventListener("change", (e) => { state.micro = e.target.checked; update({ fit: true }); });
   $("detail-close").addEventListener("click", () => selectMetro(null));
+  $("results-file").addEventListener("change", (e) => onResultsFile(e.target.files[0]));
+  $("brand-clear").addEventListener("click", clearBrand);
+  $("sample-csv").addEventListener("click", downloadBrandCsv);
   document.querySelectorAll(".legend button").forEach((b) => b.addEventListener("click", () => {
     const on = b.getAttribute("aria-pressed") !== "true";
     b.setAttribute("aria-pressed", String(on));
@@ -705,7 +994,7 @@ function init() {
 
 init();
 try {
-  presets = await getJson("/api/presets");
+  [presets, samples] = await Promise.all([getJson("/api/presets"), getJson("/api/samples")]);
 } catch (err) {
   showError(err.message);
 }

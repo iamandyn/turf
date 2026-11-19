@@ -6,7 +6,7 @@
 
 Turf helps a consumer brand decide **which US metro areas to spend on next**. The brand gives two inputs:
 - **Signals:** a few kinds of local business whose density hints at its audience (pet groomers, dog parks and vets for a pet-care app), or one of six presets.
-- **Seed metros (optional):** its best markets today, from its ad account.
+- **Its results (optional):** an ad report by ZIP or market, from which Turf picks the best markets and checks whether the signals predict this brand's results; or a few best markets typed in.
 
 Turf ranks every US metro area by how closely its profile matches the seeds, or by signal strength when there are no seeds. Each result explains itself ("dog walkers: 3.2× the typical metro's share of businesses"). Results export as ZIP lists for Meta and Google Ads, and each preset's top metros come with a pre-written creative brief. The same search is available to AI agents as MCP tools.
 
@@ -45,7 +45,8 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 | Component | Responsibility | Tech |
 |---|---|---|
 | **Data pipeline** (`scripts/`, `src/turf_app/{normalize,chains,states,serving}.py`) | Extract US places from a pinned Overture release and metro boundaries and population from the Census; normalize, flag duplicates, fill missing states; aggregate open places per metro and category; write the serving database | Python 3.12, DuckDB (+ spatial, httpfs) |
-| **Market engine** (`src/turf_app/markets.py`) | Presets, signal shares, z-scores, lookalike distance, signal strength, reasons | Pure Python over DuckDB queries |
+| **Market engine** (`src/turf_app/markets.py`) | Presets, signal shares, z-scores, lookalike distance (optionally weighted), signal strength, reasons | Pure Python over DuckDB queries |
+| **Brand results** (`src/turf_app/performance.py`, `samples.py`) | Match uploaded rows to metros, KPI per metro, best markets, the permutation-tested signal check, weighted recommendations; fictional sample brands with synthetic results | Pure Python |
 | **API** (`src/turf_app/api.py`, `ratelimit.py`, `briefs.py`) | Presets, category and metro search, market ranking, metro/ZIP CSV export, briefs; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
 | **MCP server** (`src/turf_app/mcp_server.py`) | The same search as six read-only tools for AI agents, at `/mcp` in the same app | MCP Python SDK 2.x (streamable HTTP, stateless) |
 | **Frontend** (`src/turf_app/web/`) | One page: audience presets and editable signals, seed metros, filters, ranked list, map, detail panel with signal bars and brief, exports, shareable URLs, light/dark theme | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap |
@@ -69,6 +70,9 @@ Turf ranks every US metro area by how closely its profile matches the seeds, or 
 |---|---|---|
 | **Market selection, not geo-conquesting** (the pivot) | Valid's clients are national consumer brands without stores; they buy by geography, so "which metros next" is their question | the conquesting features were removed (they remain in git history) |
 | **Signals are shares of local businesses, not per-capita rates** | Overture's coverage varies 3× between metros (2,100 to 6,200 open places per 100k people), so per-capita rates would partly measure mapping quality | Shares are diluted in metros with many of some other kind of business |
+| **Check the signals against the brand's results, with a permutation test** | The signals are a proxy; a brand's results are the only ground truth. Leave-one-out avoids overfitting the weights, but its score is biased upward, so 999 shufflings set the chance level | 0.15 s per analysis; needs at least 6 metros with enough spend |
+| **Uploaded results are never stored** | Client-confidential data; no accounts to build or data to secure | Nothing is remembered between visits |
+| **Sample brands are fictional, with synthetic data** | Real brands' results by metro aren't public; invented numbers under a real name would misrepresent it | The samples demonstrate the flow, not the method |
 | **Lookalikes to the brand's own best markets** | The brand's results are the only ground truth available; matching them is more defensible than a universal "opportunity score" | Needs seeds for the best results; without them it's only signal strength |
 | **Every result explains itself** | A media buyer has to defend a plan to a client; "2.1× the typical share of pet groomers" is checkable | More data per result |
 | **Census for metros and population** | Overture has neither; CBSAs are the standard public metro definition | A second data source, pinned by SHA-256 |

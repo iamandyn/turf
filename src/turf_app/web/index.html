@@ -21,6 +21,10 @@
           <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
         </button>
         <p class="tagline">Find the next US metros for a brand's ad spend: places that look like its best markets.</p>
+        <div class="sample-strip">
+          <span>See it with a sample brand <em>(fictional, synthetic results)</em>:</span>
+          <div class="sample-buttons" id="top-samples"></div>
+        </div>
       </header>
 
       <section class="step" aria-labelledby="step1-title">
@@ -47,14 +51,52 @@
 
       <section class="step" aria-labelledby="step2-title">
         <h2 id="step2-title"><span class="num">2</span> Best markets today <em>optional</em></h2>
-        <p class="hint">The metros where the brand already performs best, from its ad account. Turf finds others that look like them. Leave empty to rank by signal strength.</p>
-        <ul class="chips" id="seed-chips" aria-label="Seed metros" hidden></ul>
-        <div class="combo" id="seed-combo">
-          <input id="seed-input" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="e.g. Denver, Austin"
-                 role="combobox" aria-expanded="false" aria-autocomplete="list"
-                 aria-controls="seed-results" aria-label="Add a best-performing metro">
-          <ul id="seed-results" class="combo-list" role="listbox" hidden></ul>
+        <div id="manual-seeds">
+          <p class="hint">The metros where the brand already performs best. Turf finds others that look like them. Leave empty to rank by signal strength.</p>
+          <ul class="chips" id="seed-chips" aria-label="Seed metros" hidden></ul>
+          <div class="combo" id="seed-combo">
+            <input id="seed-input" type="search" autocomplete="off" spellcheck="false"
+                   placeholder="e.g. Denver, Austin"
+                   role="combobox" aria-expanded="false" aria-autocomplete="list"
+                   aria-controls="seed-results" aria-label="Add a best-performing metro">
+            <ul id="seed-results" class="combo-list" role="listbox" hidden></ul>
+          </div>
+          <div class="results-source">
+            <p class="or">Or use the brand's results</p>
+            <input id="results-file" class="sr-only" type="file" accept=".csv,.tsv,.txt,text/csv">
+            <label class="file-button" for="results-file">Upload an ad report (CSV)</label>
+            <small>Spend and conversions or revenue by ZIP code or market (e.g. "Austin, TX"). Read in your browser and used only to compute; never stored.</small>
+            <p class="or small">Or try a sample brand <em>(fictional, synthetic data)</em></p>
+            <div class="sample-buttons" id="sample-buttons" aria-label="Sample brands"></div>
+          </div>
+        </div>
+        <div class="brand-card" id="brand-card" hidden>
+          <div class="brand-head">
+            <div>
+              <p class="brand-name" id="brand-name"></p>
+              <p class="brand-meta" id="brand-meta"></p>
+            </div>
+            <button type="button" class="clear" id="brand-clear" aria-label="Stop using these results">×</button>
+          </div>
+          <p class="synthetic-note" id="synthetic-note" hidden>Synthetic results, generated to demonstrate the flow; they show how it works, not that the signals are proven. Only a real brand's data can show that.</p>
+          <p class="error" id="upload-error" role="alert" hidden></p>
+          <div id="brand-body" hidden>
+            <p class="field-label">Best markets <small id="best-note">Highest return among metros with at least 1% of spend</small></p>
+            <ul class="chips" id="best-chips"></ul>
+            <div class="check-card" id="check-card">
+              <p class="check-verdict">Do the signals predict this brand's results? <span class="badge" id="check-badge"></span></p>
+              <p class="check-summary" id="check-summary"></p>
+              <ul class="bars rho" id="check-signals" aria-label="How each signal tracks results"></ul>
+            </div>
+            <details class="brand-table">
+              <summary id="brand-table-title">All metros in the results</summary>
+              <table>
+                <thead><tr><th scope="col">Metro</th><th scope="col" class="num-col">Spend</th><th scope="col" class="num-col" id="kpi-col">KPI</th></tr></thead>
+                <tbody id="brand-rows"></tbody>
+              </table>
+            </details>
+            <button type="button" class="link" id="sample-csv">Download these results as CSV</button>
+          </div>
         </div>
       </section>
 
@@ -113,6 +155,7 @@
       <div class="legend" role="group" aria-label="Map layers">
         <button type="button" aria-pressed="true" data-layer="results"><i class="dot target"></i>Ranked</button>
         <button type="button" aria-pressed="true" data-layer="seeds" hidden><i class="dot own"></i>Best today</button>
+        <button type="button" aria-pressed="true" data-layer="current" hidden><i class="dot excluded"></i>Running now</button>
       </div>
       <aside class="detail" id="detail" hidden aria-labelledby="detail-title">
         <button type="button" class="detail-close" id="detail-close" aria-label="Close details">×</button>

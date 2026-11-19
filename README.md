@@ -6,13 +6,17 @@
 
 ![Pet-care lookalikes of Denver and Austin: Boulder ranks first with a 73% match, with its signals against the typical metro and a creative brief](documents/img/turf-results.png)
 
+![A sample fitness brand's results: its best markets by CPA, the signal check (better than chance, p = 0.01), and recommended metros where it isn't spending yet](documents/img/turf-brand.png)
+
 ## Who it's for
 
 Media buyers at an AI-native agency like Valid, whose clients are national consumer brands: subscription apps, DTC, health & fitness, home services. These brands buy Meta, TikTok and Google by geography, and one recurring question is **"we do well in Denver and Austin; where else looks like that?"**
 
+**Try it in one click:** the sample brands at the top of the page (pet-care app, fitness app, home-services brand, DTC beauty brand) are fictional, with synthetic results, and run the whole flow below.
+
 **How to use it:**
 1. **Pick an audience.** Six presets match Valid's verticals (pet care, fitness, home services, beauty & wellness, young professionals, families). Each is a set of *signals*: kinds of local business whose density hints at that audience. Edit them freely.
-2. **Add the brand's best markets today** (optional), from its ad account.
+2. **Give it the brand's results:** upload an ad report (spend and conversions or revenue by ZIP or market, e.g. a Meta or Google Ads geo export). Turf picks the best markets by ROAS or CPA, **checks whether the signals actually predict this brand's results**, and recommends lookalikes where the brand isn't spending yet. The file is read in the browser and never stored. (Or just type a few best markets.)
 3. Turf ranks every US metro area by how closely it matches them, or by signal strength without seeds. Every result says why ("dog walkers: 3.2× the typical metro's share of businesses").
 4. **Open a metro** to see each signal against the typical metro and a creative brief for that market.
 5. **Export** the ZIP codes for Meta or Google Ads, or the ranked metro list for a media plan.
@@ -31,7 +35,9 @@ Overture is good at describing *what a place is like*: every business, what kind
 **Product:**
 - **Signals are shares of local businesses, not per-capita counts.** Overture's coverage varies 3× between metros (2,100 to 6,200 open places per 100k people), so per-capita counts would partly measure how well a city is mapped. A category's share of a metro's businesses cancels that out.
 - **Every result explains itself.** A media buyer has to defend a plan to a client, so "2.1× the typical share of pet groomers" beats an opaque score.
-- **It's a proxy, and it says so.** Business mix suggests where an audience lives; it doesn't measure demand. The honest validation is to compare Turf's ranking with the brand's results by metro, which an agency like Valid already has.
+- **It's a proxy, so it checks itself against the brand's results.** Business mix suggests where an audience lives; it doesn't measure demand. With a brand's results uploaded, Turf measures how well the signals predict a metro they weren't fitted on (leave-one-out rank correlation), and judges that against 999 shufflings of the same results. The shuffling matters: the raw number is biased upward (even random results score around +0.3), and an earlier version without it called a brand with no real relationship "moderate". Signals that don't track results are dropped from the recommendations, and a "no evidence" verdict says so plainly.
+- **Sample brands are fictional and labelled synthetic.** Real companies' results by metro aren't public, and invented numbers next to a real brand's name would misrepresent it. The samples' results are generated from the signals plus noise, so their good verdicts demonstrate the flow, not the method; one sample has no real relationship, to show what "no evidence" looks like.
+- **Uploaded results are never stored.** They're client-confidential, so they're parsed in the browser, sent with the request, and gone after it: no accounts, nothing to secure at rest.
 - **Metros and population come from the Census, not Overture.** Overture has neither. Both files are pinned by SHA-256.
 - **Export ZIP codes, not metro names.** Neither Meta nor Google targets Census metro areas, but both accept US ZIP lists. Each ZIP goes to the metro holding most of its places.
 
@@ -51,7 +57,7 @@ A production version would generate briefs on demand with an API key, cache them
 - **Precompute offline, serve aggregates.** The served database is 5.5 MB of per-metro counts (it was 1.37 GB when it held every place). Queries take milliseconds and there's no database server.
 - **MCP server in the same app.** Valid gives each client an MCP server to query its account in plain English; Turf's search is available the same way, as six read-only tools at `/mcp`.
 - **No-build frontend.** Plain JavaScript and MapLibre, served by the same container: one deploy. Light and dark themes, axe-checked for accessibility.
-- **CI/CD:** every merge to `main` runs lint, strict typing and 108 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back automatically on failure. CI then drives the live site in a real browser, with an axe-core accessibility check.
+- **CI/CD:** every merge to `main` runs lint, strict typing and 127 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back automatically on failure. CI then drives the live site in a real browser, with an axe-core accessibility check.
 
 **Not built (yet):**
 - Measured demand: demographics, income, search volume.
@@ -66,9 +72,9 @@ A production version would generate briefs on demand with an API key, cache them
 claude mcp add --transport http turf https://turf.dunkasaur.gg/mcp
 ```
 
-Then ask, for example: *"Using turf, find metros like Denver and Austin for a pet-care app, and get the ZIP codes for the top three."*
+Then ask, for example: *"Using turf, find metros like Denver and Austin for a pet-care app, and get the ZIP codes for the top three."* An agent holding a brand's ad report can call `recommend_from_results` with the rows directly.
 
-The tools are `list_presets`, `search_metros`, `search_signals`, `rank_markets`, `metro_zip_codes` and `get_brief`.
+The tools are `list_presets`, `search_metros`, `search_signals`, `rank_markets`, `recommend_from_results`, `metro_zip_codes` and `get_brief`.
 
 ## Repo
 

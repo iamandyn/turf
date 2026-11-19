@@ -11,7 +11,9 @@ turf/
 │   ├── chains.py            Chain matching + duplicate flagging (DuckDB SQL + Python functions)
 │   ├── states.py            Fill missing states from state boundaries
 │   ├── serving.py           Build the read-only turf.duckdb the API serves (per-metro aggregates)
-│   ├── markets.py           Presets, signals, lookalike ranking, reasons, request/response models
+│   ├── markets.py           Presets, signal profiles, (weighted) lookalike ranking, reasons
+│   ├── performance.py       Brand results: matching, KPI, signal check (permutation test), recommendations
+│   ├── samples.py           Fictional sample brands with synthetic results
 │   ├── briefs.py            Brief model and loader; briefs.json holds the 65 pre-written briefs
 │   ├── mcp_server.py        MCP tools for AI agents, mounted at /mcp
 │   ├── ratelimit.py         Per-IP sliding-window rate limiter
@@ -64,9 +66,11 @@ turf/
 | **Serving DB schema** | `serving.py` | every SQL query in `markets.py`, `api.py`, `mcp_server.py`; bump `SCHEMA_VERSION` | `tests/conftest.py` builds it |
 | **Presets** (client types and their signals) | `PRESETS` in `markets.py` | checked against the data at startup (`api.py` lifespan); briefs per preset | `test_markets.py::test_preset*` |
 | **Ranking** (shares, z-scores, lookalikes, reasons) | `rank_markets` in `markets.py` | `MarketRequest` limits | `test_markets.py` |
+| **Brand results** (matching, KPI, signal check, recommendations) | `analyze`, `match_rows`, `check_signals` in `performance.py` | `parseResults`, `COLUMNS` (CSV column names), `renderBrand` in `web/app.js` | `tests/test_performance.py` |
+| **Sample brands** | `SAMPLES`, `generate` in `samples.py` | `/api/samples*` in `api.py`; sample buttons in `web/app.js` | `test_performance.py::test_sample*` |
 | **Exports** (metro list, ZIPs) | `export_markets` in `api.py`, `zip_rows` in `markets.py` | `metro_zips` in `serving.py` (`MIN_PLACES_PER_ZIP`) | `test_markets.py::test_export_*`, `test_zip_assignment` |
 | **Briefs** | `scripts/assemble_briefs.py` (prose), `briefs.py` | `scripts/brief_inputs.py`; `renderBrief` in `web/app.js` | `test_markets.py::test_*brief*` |
-| **MCP tools** | `mcp_server.py` | `TURF_MCP_ALLOWED_HOSTS` in the `Dockerfile`; `/mcp` rule in `ratelimit.py` | `tests/test_mcp.py` |
+| **MCP tools** (incl. `recommend_from_results`) | `mcp_server.py` | `TURF_MCP_ALLOWED_HOSTS` in the `Dockerfile`; `/mcp` rule in `ratelimit.py` | `tests/test_mcp.py` |
 | **Search** (categories, metros) | `_tiered_search` in `api.py` | `FUZZY_MIN_SIMILARITY` | `test_markets.py::test_*search*` |
 | **Rate limits** | `DEFAULT_RULES` in `ratelimit.py` | middleware in `api.py`; `TURF_CLIENT_IP_HEADER` in the `Dockerfile` | `tests/test_ratelimit.py`, `test_api.py::test_rate_limit_*` |
 | **Frontend: presets, signals, seeds** | `renderPresets`, `renderSignals`, `renderSeeds`, `setupCombo` in `web/app.js` | `web/index.html` steps 1–2 | `scripts/browser_smoke.py` |

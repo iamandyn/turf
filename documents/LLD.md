@@ -171,6 +171,10 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 | `GET /api/metros/{metro_code}` | | `Metro` (restores `?seed=` links) | 404 |
 | `POST /api/markets` | `MarketRequest` | `MarketResponse` | 404 unknown category or seed; 422 |
 | `POST /api/markets/export?format=metros\|zips` | `MarketRequest` | CSV attachment | 404, 422 |
+| `POST /api/performance` | `PerformanceRequest` | `PerformanceResponse` (§3.8) | 404 unknown category; 422 nothing matched, bad rows |
+| `POST /api/performance/export?format=metros\|zips` | `PerformanceRequest` | CSV of the recommendations (+ `brand_status`) | 404, 422 |
+| `GET /api/samples` | | `[{key, name, description, preset, kpi, geo_type, synthetic}]` | |
+| `GET /api/samples/{key}` | | the sample with its synthetic `rows` (generated once per process) | 404 |
 | `GET /api/briefs/{preset}/{metro_code}` | | `Brief` | 404 |
 | `POST /mcp` | MCP JSON-RPC (streamable HTTP) | see §3.6 | 421 unknown Host |
 | `/`, `/index.html` | | the page, with versioned asset URLs | |
@@ -245,6 +249,7 @@ An in-memory sliding window per `(client IP, rule)`, per worker. **The first mat
 
 | Rule | Limit |
 |---|---|
+| `POST /api/performance*` | 30 / 60 s |
 | `POST /api/markets*` | 60 / 60 s |
 | `/mcp` | 120 / 60 s |
 | `/api/*` | 300 / 60 s |
@@ -254,7 +259,7 @@ Over the limit returns `429` with `Retry-After` in seconds. Tracked keys are cap
 
 ### 3.6 MCP server (`mcp_server.py`)
 
-Six read-only tools (`readOnlyHint`), served at `/mcp` by the MCP Python SDK 2.x (`MCPServer`, streamable HTTP, `stateless_http=True`, JSON responses), inside the same app so they share the database, rate limiting and deploys:
+Seven read-only tools (`readOnlyHint`), served at `/mcp` by the MCP Python SDK 2.x (`MCPServer`, streamable HTTP, `stateless_http=True`, JSON responses), inside the same app so they share the database, rate limiting and deploys:
 
 | Tool | Does |
 |---|---|
@@ -262,6 +267,7 @@ Six read-only tools (`readOnlyHint`), served at `/mcp` by the MCP Python SDK 2.x
 | `search_metros(query)` | metros by name → codes |
 | `search_signals(query)` | categories for custom signals |
 | `rank_markets(preset?, signals?, seed_metro_codes?, min_population, include_micro, use_population_growth, limit)` | same as `POST /api/markets`, compact: top three reasons as text |
+| `recommend_from_results(rows, kpi, geo_type, preset?, signals?, limit)` | same as `POST /api/performance`, compact: best markets, the verdict sentence, signals that matter, recommendations |
 | `metro_zip_codes(metro_code)` | ZIPs for targeting |
 | `get_brief(preset, metro_code)` | the pre-written brief or null |
 
@@ -276,6 +282,33 @@ Implementation notes:
 - **How they were made:** `scripts/brief_inputs.py` dumps each pair's numbers (signals vs. typical, Census figures, the categories the metro is most over-represented in). The prose (headline, audience, angles, local context) was written once from those numbers, by Claude in a Claude Code session, and lives in `scripts/assemble_briefs.py`. The "Based on" lines are generated from the data by that script, never typed.
 - **Why no live LLM calls:** the live demo never calls a model, so it costs nothing however much it's used.
 - **Production version:** generate on demand with an API key, cache per (preset, metro), and cap daily spend.
+
+### 3.8 Brand results (`performance.py`, `samples.py`)
+
+`PerformanceRequest`: `rows` (1–20,000 of `{geo, spend, conversions?, revenue?}`), `geo_type` (`zip` | `metro`), `kpi` (`roas` needs revenue, `cpa` needs conversions), the market fields (`preset`/`categories`, `use_growth`, `min_population`, `include_micro`, `limit`), `best_count` (1–10, default 5), `min_spend_share` (default 1%).
+
+1. **Matching** (`match_rows`):
+   - ZIPs: the first five digits, through `metro_zips`.
+   - Names: an exact full metro name, a 5-digit CBSA code, or a principal city with an optional state. Each metro name is split into principal cities and states ("Austin-Round Rock-San Marcos, TX"), so "Austin, TX", "Austin TX", "Round Rock TX" and "Austin" all match, but "Austin, MN" goes to Austin, MN.
+   - Unmatched rows are counted, and up to 10 examples are returned.
+   - The frontend joins separate city and state columns.
+2. **KPI per metro:** sums per metro; ROAS = revenue / spend, CPA = spend / conversions. A metro is **trusted** with at least `min_spend_share` of total spend (a $1 test with ROAS 1,000 isn't a best market). The best markets are the top `best_count` trusted metros.
+3. **Signal check:**
+   - Profiles cover every metro the brand runs in (`build_profiles(extra_metros=...)`), whatever its size.
+   - Per signal: Spearman of its z-score with the KPI (sign flipped for CPA) across trusted metros; weight = max(0, rho).
+   - Out-of-sample: leave-one-out. For each metro, weights come from the others and score that metro, then Spearman(scores, KPI). Each fold uses the full-sample ranks with the held-out metro's terms subtracted, O(1) per signal.
+   - That statistic is biased upward (only helpful signals keep weight; shuffled data scores around +0.3), so the same procedure runs on **999 permutations** of the KPI (seeded, deterministic) for the chance level (95th percentile) and a p-value.
+   - Verdict: `strong` p < 0.05, `moderate` p < 0.10, `weak` otherwise, `too_few` under 6 trusted metros. With no real relationship p is uniform, so each cut-off is its false-alarm rate. The weights are used for recommendations only when `strong` or `moderate`.
+   - Real samples: pets p = 0.006, fitness 0.015, home services 0.01, beauty (no relationship) 0.10, so `weak`.
+4. **Recommendations:** `rank_markets` with the best markets as seeds, the fitted weights, and metros with at least 0.5% of spend excluded (already in the plan). Each result gets a status: `low_spend` (in the results, below that) or `not_running`.
+
+The rows are used for the request only and never stored.
+
+**Samples** (`samples.py`):
+- Four fictional brands ("Sample pet-care app", …), flagged `synthetic`.
+- Generated deterministically: the largest N metros; spend ∝ population^0.9 × lognormal noise; KPI = base × exp(±effect × signal strength + Gaussian noise). Effects: 0.45 / 0.35 / 0.30 / 0.0 (beauty).
+- One brand reports by ZIP (8,813 rows), the others by market name.
+- They demonstrate the flow; their verdicts are built in, and the page and README say so.
 
 ---
 
@@ -362,7 +395,7 @@ The `production` environment is optional; add required reviewers there to gate d
 
 - **Unit:** `test_normalize.py`, `test_ratelimit.py` (fake clock).
 - **Pipeline:** `test_chains.py` and `test_states.py` build tiny DuckDB tables shaped like real cases and run the real `build()` / `fill_states()`.
-- **Markets and API:** `conftest.py` builds a serving database **with the real `write_serving_db`** from 12 synthetic metros with known category mixes (metro *i* has *i* pet groomers and 12 − *i* dog parks), so rankings are predictable. `test_markets.py` covers ranking, lookalikes, reasons, filters, validation, exports, ZIP assignment, presets and briefs; `test_api.py` the page, headers, versioned assets and rate limiting; `test_mcp.py` the MCP endpoint over HTTP. Rate limiting is disabled in the shared client and tested separately.
+- **Markets and API:** `conftest.py` builds a serving database **with the real `write_serving_db`** from 12 synthetic metros with known category mixes (metro *i* has *i* pet groomers and 12 − *i* dog parks), so rankings are predictable. `test_markets.py` covers ranking, lookalikes, reasons, filters, validation, exports, ZIP assignment, presets and briefs; `test_performance.py` matching, totals, KPI direction, trusted metros, the strong / weak / too-few verdicts, recommendation statuses, exports, validation and the samples end to end; `test_api.py` the page, headers, versioned assets and rate limiting; `test_mcp.py` the MCP endpoint over HTTP. Rate limiting is disabled in the shared client and tested separately.
 - **Convention:** a test case taken from real data says so in a comment, quoting the actual row ("Real case: …").
-- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (results, dark mode, phone), and walks the flow: presets, removing and adding signals, seed metros and lookalikes, the detail panel and its brief, both exports, URL restore, the population filter, layer toggles, dark mode (kept after reload), phone layout. It runs locally against any base URL, and in CI after every deploy.
+- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (results, dark mode, phone), and walks the flow: presets, removing and adding signals, seed metros and lookalikes, the detail panel and its brief, both exports, URL restore, the population filter, a sample brand (verdict, best markets, recommendation tags, export), the no-relationship sample ("No evidence"), an uploaded ad report with real column names, layer toggles, dark mode (kept after reload), phone layout. It runs locally against any base URL, and in CI after every deploy.
 - **Not covered by automated tests:** the S3 and Census extract scripts (network, minutes), the shell deploy scripts beyond syntax, and pasting the ZIP export into Meta or Google Ads.

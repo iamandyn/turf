@@ -1,6 +1,6 @@
 # Block added to the server's /etc/caddy/Caddyfile. DNS is a proxied (orange-cloud)
 # Cloudflare A record, so the origin IP stays hidden; Caddy still gets its own
-# Let's Encrypt certificate and Cloudflare connects to it in Full (strict) mode.
+# Let's Encrypt certificate; set Cloudflare SSL/TLS to Full (strict) so it verifies it.
 # Apply with: back up, append, `caddy validate`, `systemctl reload caddy`.
 turf.dunkasaur.gg {
 	encode zstd gzip

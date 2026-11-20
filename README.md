@@ -31,10 +31,9 @@ The live site opens with a short notice saying the same thing:
 
 ## Why this
 
-<!-- Draft: rewrite in your own words. -->
-National consumer brands without storefronts (subscription apps, DTC, health and fitness, home services) buy Meta, TikTok and Google ads by geography. A recurring question is *where should the budget go next?* Whoever runs their ads, an agency or an in-house team, already holds the best possible input to answer it: the brand's own results by market. Overture adds what those results can't show on their own, a description of every US metro by the local businesses in it. Turf finds the metros that look like a brand's best markets, and checks whether that resemblance has actually predicted the brand's results before recommending anything.
+Initially after reviewing the data available to me, I focused around tying it into Valid's existing business: ads. Initially I implemented a geo-conquesting tool built around targeting ads around competitors' store locations; however, I pivoted away from this as I felt like physical advertisements were not a good fit. Then, I moved towards a configurable market explorer, but it felt overwhelming with too much input and controls. This final iteration I focused in on simplified the process and made it clear what the purpose of the tool was, input your existing data and receive a generated report for recommended next steps.
 
-I got here in steps. The first version was a geo-conquesting tool (ads around competitors' stores), which suits businesses with storefronts, and the brands that buy ads this way mostly don't have any. A second version was a configurable market explorer with too many controls. This one does one thing: brand data in, report out.
+This felt like a much stronger fit because the tool ingests existing data on how well current targeted ads are doing, combines it with Overture's data, and gives recommendations on where focused ads would be the best markets.
 
 ## Decisions and trade-offs
 

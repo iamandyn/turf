@@ -31,9 +31,9 @@ The live site opens with a short notice saying the same thing:
 
 ## Why this
 
-Initially after reviewing the data available to me, I focused around tying it into Valid's existing business: ads. Initially I implemented a geo-conquesting tool built around targeting ads around competitors' store locations; however, I pivoted away from this as I felt like physical advertisements were not a good fit. Then, I moved towards a configurable market explorer, but it felt overwhelming with too much input and controls. This final iteration I focused in on simplified the process and made it clear what the purpose of the tool was, input your existing data and receive a generated report for recommended next steps.
+Brands running ads by geography regularly have to decide where the next budget goes, often by gut feel or by defaulting to the biggest metros. After reviewing the data available to me, I focused on tying it into the ad business. My first version was a geo-conquesting tool that targeted ads around competitors' store locations; however, I pivoted away from it because most of the brands that buy ads by geography (subscription apps, DTC, home services) don't have storefronts, so there's no competitor footprint to target. Next, I built a configurable market explorer, but it felt overwhelming, with too many inputs and controls. In this final iteration, I focused on simplifying the process and making the tool's purpose clear: input your existing results and receive a report with recommended next steps.
 
-This felt like a much stronger fit because the tool ingests existing data on how well current targeted ads are doing, combines it with Overture's data, and gives recommendations on where focused ads would be the best markets.
+This felt like a much stronger fit because the tool starts from data the brand already has, how its current ads are performing in each market, and combines it with Overture's description of every US metro to recommend the markets where its ads should run next. Before recommending anything, it checks whether those patterns actually predicted the brand's results, so a strategist knows how much to trust the list.
 
 ## Decisions and trade-offs
 

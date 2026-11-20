@@ -6,11 +6,13 @@ Run locally:
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import hashlib
 import io
 import os
 import re
+import tempfile
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import duckdb
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -26,6 +29,10 @@ from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
 from turf_app import briefs, mcp_server, samples
+from turf_app.connector.client import Sleep
+from turf_app.connector.platform import PlatformConfig, create_platform_app
+from turf_app.connector.routes import ConnectorService, build_router
+from turf_app.connector.store import Store
 from turf_app.markets import (
     PRESETS,
     MarketRequest,
@@ -174,8 +181,17 @@ def _tiered_search(table: str, columns: str, order: str) -> str:
     """
 
 
-def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = None) -> FastAPI:
+def create_app(
+    db_path: Path | None = None,
+    rate_limiter: RateLimiter | None = None,
+    state_dir: Path | None = None,
+    platform_fault_rate: float | None = None,
+    connector_sleep: Sleep | None = None,
+) -> FastAPI:
     path = db_path or Path(os.environ.get("TURF_DB", "data/turf.duckdb"))
+    # Writable state for the ad-account connector and the simulated platform
+    # (SQLite, shared by the workers). In production, the container's tmpfs.
+    state = state_dir or Path(os.environ.get("TURF_STATE_DIR", tempfile.gettempdir()))
     # Baked into the image at build time, so CI can check the live site runs
     # the commit it just deployed.
     commit = os.environ.get("TURF_COMMIT", "dev")
@@ -203,14 +219,66 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         app.state.db = con
         app.state.briefs = briefs.load()
         app.state.samples = {}
+        app.state.sample_totals = {}
         mcp_server.start(mcp)
         try:
             async with mcp.session_manager.run():
                 yield
         finally:
+            await connector.shutdown()
             con.close()
 
     app = FastAPI(title="Turf", lifespan=lifespan)
+
+    # ---------- Ad-account connector (see connector/) ----------
+
+    def sample_totals(key: str) -> list[samples.MetroTotal]:
+        cache: dict[str, list[samples.MetroTotal]] = app.state.sample_totals
+        if key not in cache:  # deterministic, so built once per process
+            cur = app.state.db.cursor()
+            try:
+                cache[key] = samples.metro_totals(cur, samples.SAMPLES[key])
+            finally:
+                cur.close()
+        return cache[key]
+
+    # The tokens only guard synthetic data, but every worker must share the key.
+    platform_config = PlatformConfig(
+        db_path=state / "turf-platform.sqlite3",
+        secret=os.environ.get("TURF_PLATFORM_SECRET", "turf-simulated-platform").encode(),
+        fault_rate=platform_fault_rate
+        if platform_fault_rate is not None
+        else float(os.environ.get("TURF_PLATFORM_FAULT_RATE", "0.2")),
+    )
+    platform = create_platform_app(platform_config, sample_totals)
+
+    def platform_http() -> httpx.AsyncClient:
+        # TURF_ADS_API_BASE points the connector at a platform over the network;
+        # unset, it reaches the simulated one in-process (a real HTTP exchange,
+        # no network hop).
+        base = os.environ.get("TURF_ADS_API_BASE")
+        if base:
+            return httpx.AsyncClient(base_url=base, timeout=15)
+        transport = httpx.ASGITransport(app=platform)
+        return httpx.AsyncClient(transport=transport, base_url="http://ads-platform.internal")
+
+    def analyze_report(req: PerformanceRequest) -> PerformanceResponse:
+        cur = app.state.db.cursor()
+        try:
+            return analyze(cur, req)
+        finally:
+            cur.close()
+
+    connector = ConnectorService(
+        Store(state / "turf-connector.sqlite3"),
+        platform_http,
+        analyze_report,
+        client_id=platform_config.client_id,
+        client_secret=platform_config.client_secret,
+        sleep=connector_sleep or asyncio.sleep,
+    )
+    app.state.connector = connector
+    app.include_router(build_router(lambda: connector))
     # MCP tools for AI agents (see mcp_server.py), sharing the database.
     mcp = mcp_server.build_mcp(lambda: app.state.db.cursor(), lambda: app.state.briefs)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -231,7 +299,8 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         path = request.url.path
-        if not (path.startswith("/api/") or path.startswith("/docs") or path == "/openapi.json"):
+        api_like = path.startswith(("/api/", "/docs", "/mock/")) or path == "/openapi.json"
+        if not api_like:
             response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
             if path.lstrip("/") in VERSIONED_ASSETS and request.query_params.get("v"):
                 # A versioned URL's content never changes; a new version is a new URL.
@@ -427,6 +496,8 @@ def create_app(db_path: Path | None = None, rate_limiter: RateLimiter | None = N
 
     # Before the static mount, so /mcp isn't treated as a file.
     app.router.routes.append(mcp_server.mcp_route(mcp))
+    # The simulated ad platform, public so anyone can see what the connector talks to.
+    app.mount("/mock/ads", platform, name="mock-ads-platform")
 
     # Last, so API routes and the page win.
     app.mount("/", StaticFiles(directory=WEB_DIR), name="web")

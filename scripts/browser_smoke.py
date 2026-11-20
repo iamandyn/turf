@@ -4,8 +4,10 @@ Fails on any console error, page error, CSP violation, or accessibility
 violation (axe-core), and walks the report flow: the demo disclaimer on first
 visit, opening a sample brand's report, expanding a recommendation (data and
 brief), both exports, the shareable URL, the sample with no real relationship,
-uploading an ad report and choosing its category, adjusting the signals, dark
-mode, and the phone layout. Saves screenshots.
+uploading an ad report and choosing its category, adjusting the signals,
+connecting a simulated ad account (live backfill, then an incremental sync
+after moving the platform's date), dark mode, and the phone layout. Saves
+screenshots.
 
 Usage:
     uv run python scripts/browser_smoke.py --base-url http://127.0.0.1:8000
@@ -183,6 +185,40 @@ def main() -> None:
         wait_report(upload)
         n_after = upload.locator("#signal-chips li").count()
         check(n_after == n_before - 1, f"adjust signals: {n_before} -> {n_after}", problems)
+
+        # 7b. Connect a simulated ad account: live backfill, report, incremental sync.
+        live = new_page()
+        live.goto(args.base_url, wait_until="networkidle")
+        live.wait_for_selector("#about[open]", timeout=10_000)
+        live.click("#about button")
+        live.select_option("#connect-sample", args.sample)
+        live.click("#connect")
+        live.wait_for_selector("#sync-status:text('Synced')", timeout=60_000)
+        live.wait_for_selector("#report:not(.awaiting)", timeout=15_000)
+        wait_report(live)
+        log = live.text_content("#sync-log") or ""
+        check(
+            "Backfill" in log and "Page 1:" in log and "connection=" in live.url
+            and live.locator(".rec").count() == 5,
+            f"connector backfill: {log.count('Page ')} pages, {log.count('retrying')} retries",
+            problems,
+        )  # fmt: skip
+        live.screenshot(path=str(out / "07-connector.png"))
+        check_a11y(live, "connector", problems)
+        live.click("#advance-1")
+        live.wait_for_selector("#sync-log li.platform", state="attached")
+        live.click("#sync-now")
+        live.wait_for_selector("#sync-status:text('Syncing')", timeout=10_000)
+        live.wait_for_selector("#sync-status:text('Synced')", timeout=60_000)
+        changes = live.inner_text("#sync-changes")
+        log = live.text_content("#sync-log") or ""
+        check(
+            "Incremental" in log and "updated" in log and "over the last 28 days" in changes,
+            f"connector incremental sync: {changes.splitlines()[0][:70]}",
+            problems,
+        )
+        live.click("#disconnect")
+        live.wait_for_selector("#start:not([hidden])")
 
         # 8. Dark mode: toggle, accessible, and remembered across reloads.
         page.click("#theme-toggle")

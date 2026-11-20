@@ -816,6 +816,7 @@ default-groups = ["dev", "pipeline"]
 dependencies = [
     { name = "duckdb" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "pydantic" },
     { name = "uvicorn", extra = ["standard"] },
@@ -824,7 +825,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "axe-playwright-python" },
-    { name = "httpx" },
     { name = "mypy" },
     { name = "playwright" },
     { name = "pytest" },
@@ -838,6 +838,7 @@ pipeline = [
 requires-dist = [
     { name = "duckdb", specifier = ">=1.1" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
@@ -846,7 +847,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "axe-playwright-python", specifier = ">=0.1.8" },
-    { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "playwright", specifier = ">=1.65.2" },
     { name = "pytest", specifier = ">=8.3" },

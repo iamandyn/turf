@@ -10,6 +10,8 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "mcp>=2.3,<3",
+    # The ad-platform connector's HTTP client (connector/client.py).
+    "httpx>=0.27",
 ]
 
 [dependency-groups]
@@ -21,7 +23,6 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.7",
     "mypy>=1.13",
-    "httpx>=0.27",
     "playwright>=1.65.2",
     "axe-playwright-python>=0.1.8",
 ]

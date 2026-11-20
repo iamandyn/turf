@@ -17,7 +17,7 @@ An agency like Valid holds ad results for every client, by location. Turf turns 
 5. **The data behind each recommendation:** the most similar markets the brand already runs in and their results, the area's local businesses against the typical metro, population and growth, and a creative brief.
 6. **Exports:** ZIP lists for Meta and Google Ads, a CSV of the recommendations, and a print layout that saves as a PDF.
 
-**Input:** upload an ad-platform report by location (a ZIP or market column, spend, and conversions or revenue; Meta and Google column names work) and say what kind of brand it is. Or open one of four sample brands.
+**Input:** upload an ad-platform report by location (a ZIP or market column, spend, and conversions or revenue; Meta and Google column names work) and say what kind of brand it is. Or open one of four sample brands, or **connect a sample ad account** and watch Turf sync it live (below).
 
 ![A recommendation opened: the brand's most similar markets and their CPA, local businesses against the typical metro, and a creative brief](documents/img/turf-recommendation.png)
 
@@ -25,7 +25,7 @@ An agency like Valid holds ad results for every client, by location. Turf turns 
 
 The live site opens with a short notice saying the same thing:
 - **Sample brands are fictional**, and their results are synthetic, generated to show how the report works.
-- **No live data ingestion.** A production version would connect to the brand's ad accounts. Here an uploaded CSV is read in the browser, used for one report, and never stored.
+- **No real ad accounts.** A production version would connect to the brand's ad accounts. Here an uploaded CSV is read in the browser, used for one report, and never stored; or you can connect a *simulated* ad account (a stand-in platform inside the demo), which Turf syncs the way it would a real one.
 - **No real-time AI generation.** The creative briefs for the sample brands' recommendations were written ahead of time, so the public demo costs nothing to run however much it's used. Everything else is calculated from data on request.
 - **The data is real and public:** Overture Maps places and US Census metro areas and population.
 
@@ -58,12 +58,13 @@ I got here in steps. The first version was a geo-conquesting tool (ads around co
 
 **Engineering:**
 - **Precompute offline, serve aggregates.** The served database is 5.5 MB of per-metro counts built from 18 million places. A full report takes about 0.15 s, including the 999-shuffle check.
+- **An ad-account connector, against a simulated platform.** There's no real ad account to connect, so the app includes a stand-in ad platform (`/mock/ads`, an insights API shaped like Meta's) that misbehaves the way real ones do: it refuses requests with 429s and `Retry-After`, has transient 503s, expires tokens, pages with opaque cursors, and keeps adding conversions to the last three days. The connector handles each: token refresh, retries with backoff, idempotent upserts keyed by day and market, incremental syncs that re-fetch a lookback window, and a report recomputed and compared with the previous one ("Raleigh moved from #6 to #3"). Jobs run in the background, their progress streams to the page over server-sent events, and their state lives in SQLite so either of the two workers can serve it. It costs nothing to run: no API keys, no external calls.
 - **MCP server in the same app.** Valid gives each client an MCP server to query its account in plain English. Turf's analysis is available the same way at `/mcp`, including `recommend_from_results` for an agent holding a brand's ad report.
 - **No-build frontend.** Plain JavaScript and MapLibre, served by the same container. Light and dark themes, a print layout, axe-checked for accessibility.
-- **CI/CD:** every merge to `main` runs lint, strict typing and 129 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back on failure. CI then drives the live site in a real browser, with an accessibility check.
+- **CI/CD:** every merge to `main` runs lint, strict typing and 145 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back on failure. CI then drives the live site in a real browser, with an accessibility check.
 
 **Not built (yet):**
-- Live connections to ad accounts.
+- Connections to real ad accounts (the connector syncs the simulated platform; pointing it at a real one means OAuth with that platform and its field names).
 - Measured demand: demographics, income, search volume.
 - On-demand AI briefs and personas for uploaded brands.
 - Countries other than the US.

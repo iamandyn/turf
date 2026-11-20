@@ -15,6 +15,12 @@ turf/
 │   ├── performance.py       Brand results: matching, KPI, signal check (permutation test), recommendations
 │   ├── samples.py           Fictional sample brands with synthetic results
 │   ├── briefs.py            Brief model and loader; briefs.json holds the 65 pre-written briefs
+│   ├── connector/           Ad-account connector and the simulated ad platform it syncs
+│   │   ├── platform.py      Simulated ad platform (Meta-shaped insights API), mounted at /mock/ads
+│   │   ├── client.py        HTTP client: token refresh, paging, retries, row validation
+│   │   ├── store.py         SQLite state shared by workers: connections, jobs, events, rows
+│   │   ├── sync.py          One sync job: backfill/incremental, upsert, report and diff
+│   │   └── routes.py        /api/connections endpoints, job runner, server-sent events
 │   ├── mcp_server.py        MCP tools for AI agents, mounted at /mcp
 │   ├── ratelimit.py         Per-IP sliding-window rate limiter
 │   ├── api.py               FastAPI app: routes, exports, DB cursor dependency, middleware, page
@@ -68,6 +74,8 @@ turf/
 | **Ranking** (shares, z-scores, lookalikes, reasons) | `rank_markets` in `markets.py` | `MarketRequest` limits | `test_markets.py` |
 | **Brand results** (matching, KPI, signal check, recommendations) | `analyze`, `match_rows`, `check_signals` in `performance.py` | `parseResults`, `COLUMNS` (CSV column names), `renderBrand` in `web/app.js` | `tests/test_performance.py` |
 | **Sample brands** | `SAMPLES`, `generate` in `samples.py` | `/api/samples*` in `api.py`; sample buttons in `web/app.js` | `test_performance.py::test_sample*` |
+| **Ad-account connector** (sync jobs, retries, progress stream) | `connector/sync.py`, `connector/client.py` | `connector/store.py` (schema), `connector/routes.py`; connector section of `web/app.js` (`connectSample`, `followSync`, `renderChanges`) and `#sync-panel` in `web/index.html` | `tests/test_connector.py`; browser smoke step 7b |
+| **Simulated ad platform** (data, faults, late conversions) | `connector/platform.py` (`day_rows`, `MATURITY`, `_maybe_fail`) | `samples.metro_totals` (its numbers) | `tests/test_connector.py::test_platform_*` |
 | **Exports** (metro list, ZIPs) | `export_markets` in `api.py`, `zip_rows` in `markets.py` | `metro_zips` in `serving.py` (`MIN_PLACES_PER_ZIP`) | `test_markets.py::test_export_*`, `test_zip_assignment` |
 | **Briefs** | `scripts/assemble_briefs.py` (prose), `briefs.py` | `scripts/brief_inputs.py`; `renderBrief` in `web/app.js` | `test_markets.py::test_*brief*` |
 | **MCP tools** (incl. `recommend_from_results`) | `mcp_server.py` | `TURF_MCP_ALLOWED_HOSTS` in the `Dockerfile`; `/mcp` rule in `ratelimit.py` | `tests/test_mcp.py` |

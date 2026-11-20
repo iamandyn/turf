@@ -10,7 +10,7 @@ Turf turns **a brand's ad results by location into a market report**: the metro 
 - checks whether those patterns predict the brand's results, with a permutation test;
 - recommends the metros that look most like the best markets where the brand spends little or nothing, each with an expected result from the brand's most similar markets.
 
-The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The same analysis is available to AI agents as MCP tools.
+The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The same analysis is available to AI agents as MCP tools. Instead of uploading, a visitor can connect a **simulated ad account**: Turf syncs it through an API like a production connector would and updates the report as new days arrive.
 
 **Users:** media buyers at an agency like Valid, an AI-native agency whose clients are national consumer brands (subscription apps, DTC, health & fitness, home services) buying on Meta, TikTok and Google. Those brands buy by geography but have no stores, so the question isn't "where are our competitors" but "where else looks like the markets that work for us".
 
@@ -50,6 +50,8 @@ The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The sa
 | **Market engine** (`src/turf_app/markets.py`) | Presets, signal shares, z-scores, lookalike distance (optionally weighted), signal strength, reasons | Pure Python over DuckDB queries |
 | **Brand results** (`src/turf_app/performance.py`, `samples.py`) | Match uploaded rows to metros, KPI per metro, best markets, the permutation-tested signal check, weighted recommendations; fictional sample brands with synthetic results | Pure Python |
 | **API** (`src/turf_app/api.py`, `ratelimit.py`, `briefs.py`) | Presets, category and metro search, market ranking, metro/ZIP CSV export, briefs; per-IP rate limiting | FastAPI, Pydantic, DuckDB read-only |
+| **Ad-account connector** (`src/turf_app/connector/`) | Connect a (simulated) ad account and sync it: OAuth token with refresh, cursor paging, retries with backoff and `Retry-After`, validated rows upserted by day and market, backfill then incremental syncs with a lookback for late conversions, the report recomputed and diffed; background jobs with progress as server-sent events | httpx, SQLite (WAL) in the container's tmpfs, asyncio tasks |
+| **Simulated ad platform** (`src/turf_app/connector/platform.py`) | A stand-in for a real ad platform at `/mock/ads`: an insights API shaped like Meta's, serving the sample brands day by day, with injected rate limits, outages and late-arriving conversions, and a demo control to move its date forward | FastAPI sub-app, reached by the connector in-process over httpx's ASGI transport |
 | **MCP server** (`src/turf_app/mcp_server.py`) | The same search as six read-only tools for AI agents, at `/mcp` in the same app | MCP Python SDK 2.x (streamable HTTP, stateless) |
 | **Frontend** (`src/turf_app/web/`) | Two states: a start screen (sample brands, or upload + one category question) and the report (recommendations with expandable data and briefs, confidence, drivers, markets today, method, adjust signals), map, exports, print layout, demo disclaimer dialog, light/dark theme | Plain HTML/CSS/ES modules (no build step), MapLibre GL 4.7.1 (vendored), OpenFreeMap basemap |
 | **Container** (`Dockerfile`, `deploy/docker-compose.yml`) | Immutable image per commit; data mounted read-only | Docker, Compose |
@@ -61,6 +63,8 @@ The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The sa
 **Page load:** FastAPI serves `index.html` with content-hashed asset URLs, the scripts, styles and vendored MapLibre, with a strict CSP; map tiles come straight from OpenFreeMap.
 
 **Report:** browser or agent → Cloudflare → Caddy (sets `X-Client-IP`) → container → rate limiter → `POST /api/performance` (or the `recommend_from_results` MCP tool) → `analyze()` matches rows to metros, builds profiles from DuckDB, runs the signal check, ranks lookalikes and attaches similar markets and snapshots → JSON. The rows exist only for that request.
+
+**Ad-account sync:** `POST /api/connections` creates a simulated account and a connection, and queues a backfill job (an asyncio task in that worker, at most 2 running per worker). The job gets a token, pages through the platform's insights (retrying refusals), upserts each page into SQLite, then runs `analyze()` on the last 28 days and stores what changed. Every step is written as an event; `GET …/events` streams them to the page (server-sent events) from whichever worker serves the request. The page then fetches the window's rows and builds the report the same way as for an upload.
 
 **Code release:** a push to `main` runs the checks. If they pass, CI builds `ghcr.io/iamandyn/turf:<sha>`, then SSHes to the server as `turfdeploy`, whose key can only run `deploy <sha>`. The server pulls the image, switches the container, and waits for `/api/meta` to report that SHA, rolling back if it doesn't. CI then smoke-tests the public URL and drives it in a browser.
 
@@ -83,6 +87,9 @@ The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The sa
 | **Ask the brand's category, don't detect it** | Trying every category and keeping the best fit would inflate the confidence numbers; the user already knows | One question before the report |
 | **Expected results from similar markets** | Easy to check and honest about spread: the median and range of the brand's three most similar existing markets | A rough estimate, labelled as such |
 | **Pre-written briefs, no live LLM calls; a disclaimer dialog** | It's a take-home demo: the live site must cost nothing to run, and visitors should know the samples are fictional | Briefs exist only for the sample brands' top recommendations (20) |
+| **A connector against a simulated platform** | Shows the integration work a real connector needs (auth, paging, retries, idempotency, incremental sync, background jobs, live progress) with no ad account and no API cost | The platform's behavior is ours, so the connector is proven against a model of Meta's API, not Meta's |
+| **Connector state in SQLite under `/tmp`** | Two workers in a read-only container: job state and progress must be shared, and SQLite in WAL mode needs no extra service | State is lost on restart (fine for synthetic demo data); a multi-host deployment would move it to Postgres |
+| **Synced data is kept, uploads are not** | Synced data is synthetic and incremental sync needs history; uploads are client data | Connections expire after a day of inactivity, and can be deleted at once ("Disconnect") |
 | **MCP server in the same app** | Valid already gives clients an MCP server for their account; agents are how an AI-native agency would use this | A runtime dependency (MCP SDK) |
 | **Precompute offline, serve aggregates** | The served file is 5.5 MB; queries take milliseconds; no database server | A data refresh means rerunning the pipeline (~5 minutes) |
 | **Pinned Overture release** | Reproducible results; the release is shown in `/api/meta` | Someone has to run the pipeline monthly |
@@ -95,7 +102,7 @@ The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The sa
 - Countries other than the US.
 - Measured demand (demographics, income, foot traffic, search volume).
 - Pushing targets into ad accounts through the platforms' APIs; Turf produces files and tool results.
-- User accounts or saved plans.
+- User accounts or saved plans (a connection is reachable only through its unguessable id, and expires after a day).
 
 ## 7. Known limitations
 

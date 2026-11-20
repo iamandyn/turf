@@ -34,6 +34,9 @@ class Rule:
 # Most specific first; the first matching rule applies.
 DEFAULT_RULES: tuple[Rule, ...] = (
     Rule("/api/performance", limit=30, window_s=60, method="POST"),
+    # Each new connection creates an account and starts a backfill.
+    Rule("/api/connections", limit=20, window_s=60, method="POST"),
+    Rule("/mock/", limit=120, window_s=60),
     Rule("/api/markets", limit=60, window_s=60, method="POST"),
     Rule("/mcp", limit=120, window_s=60),
     Rule("/api/", limit=300, window_s=60),

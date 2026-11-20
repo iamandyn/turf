@@ -90,13 +90,27 @@ def _market_label(name: str) -> str:
     return f"{cities.split('-')[0]}, {states.split('-')[0]}"
 
 
-def generate(db: duckdb.DuckDBPyConnection, sample: Sample) -> SampleData:
+@dataclass(frozen=True)
+class MetroTotal:
+    """A sample brand's monthly results in one metro."""
+
+    metro_code: str
+    label: str  # as an ad platform labels the market, e.g. "Austin, TX"
+    spend: float
+    conversions: float
+    revenue: float
+
+
+def metro_totals(db: duckdb.DuckDBPyConnection, sample: Sample) -> list[MetroTotal]:
+    """The sample's monthly results per metro (what ``generate`` reports, before any
+    split into ZIPs). The simulated ad platform (connector/platform.py) builds its
+    daily numbers from these."""
     rng = random.Random(sample.seed)
     profiles = build_profiles(db, MarketRequest(preset=sample.preset))
     biggest = sorted(profiles.metros, key=lambda c: -profiles.metros[c][3])[: sample.markets]
     weights = {c: profiles.metros[c][3] ** 0.9 * rng.lognormvariate(0, 0.35) for c in biggest}
     total_w = sum(weights.values())
-    rows: list[ResultRow] = []
+    out: list[MetroTotal] = []
     for code in biggest:
         spend = sample.budget * weights[code] / total_w
         strength = profiles.strength(code)
@@ -109,19 +123,28 @@ def generate(db: duckdb.DuckDBPyConnection, sample: Sample) -> SampleData:
             cpa = sample.base * math.exp(-sample.effect * strength + shock)
             conversions = spend / cpa
             revenue = 0.0
+        out.append(
+            MetroTotal(code, _market_label(profiles.metros[code][1]), spend, conversions, revenue)
+        )
+    return out
+
+
+def generate(db: duckdb.DuckDBPyConnection, sample: Sample) -> SampleData:
+    rows: list[ResultRow] = []
+    for t in metro_totals(db, sample):
         if sample.geo_type == "metro":
             rows.append(
                 ResultRow(
-                    geo=_market_label(profiles.metros[code][1]),
-                    spend=round(spend, 2),
-                    conversions=round(conversions, 1),
-                    revenue=round(revenue, 2) if revenue else None,
+                    geo=t.label,
+                    spend=round(t.spend, 2),
+                    conversions=round(t.conversions, 1),
+                    revenue=round(t.revenue, 2) if t.revenue else None,
                 )
             )
             continue
         # ZIP-level report: split the metro's results over its ZIPs by size.
         zips = db.execute(
-            "SELECT zip, n_places FROM metro_zips WHERE metro_code = ? ORDER BY zip", [code]
+            "SELECT zip, n_places FROM metro_zips WHERE metro_code = ? ORDER BY zip", [t.metro_code]
         ).fetchall()
         total_places = sum(n for _, n in zips) or 1
         for zip_code, n in zips:
@@ -129,9 +152,9 @@ def generate(db: duckdb.DuckDBPyConnection, sample: Sample) -> SampleData:
             rows.append(
                 ResultRow(
                     geo=zip_code,
-                    spend=round(spend * share, 2),
-                    conversions=round(conversions * share, 2),
-                    revenue=round(revenue * share, 2) if revenue else None,
+                    spend=round(t.spend * share, 2),
+                    conversions=round(t.conversions * share, 2),
+                    revenue=round(t.revenue * share, 2) if t.revenue else None,
                 )
             )
     return SampleData(**info(sample).model_dump(), rows=rows)

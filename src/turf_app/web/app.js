@@ -205,6 +205,12 @@ function renderStart() {
   };
   select.onchange = hint;
   hint();
+  const connectSelect = $("connect-sample");
+  connectSelect.innerHTML = "";
+  for (const smp of samples) {
+    const label = smp.name.replace(/^Sample /, "");
+    connectSelect.add(new Option(`${label.charAt(0).toUpperCase()}${label.slice(1)} (measured by ${kpiName(smp.kpi)})`, smp.key));
+  }
 }
 
 async function openSample(key) {
@@ -234,6 +240,9 @@ function buildFromUpload() {
 }
 
 function changeBrand() {
+  syncStream?.close();
+  syncStream = null;
+  setSyncBusy(false);
   state.brand = null;
   report = null;
   pending = null;
@@ -245,11 +254,15 @@ function changeBrand() {
 }
 
 function showView() {
-  const inReport = Boolean(state.brand && report);
+  const connected = Boolean(state.brand?.connection);
+  const inReport = Boolean(state.brand && (report || connected));
   $("start").hidden = inReport;
   $("report").hidden = !inReport;
-  $("actionbar").hidden = !inReport;
-  document.querySelector(".legend").hidden = !inReport;
+  // A connection's view opens before its first report: only the sync panel shows.
+  $("report").classList.toggle("awaiting", !report);
+  $("sync-panel").hidden = !connected;
+  $("actionbar").hidden = !report;
+  document.querySelector(".legend").hidden = !report;
 }
 
 // ---------- Report ----------
@@ -939,6 +952,252 @@ window.addEventListener("beforeprint", () => {
   document.querySelectorAll("details").forEach((d) => { d.open = true; });
 });
 
+// ---------- Ad-account connector (simulated platform; see connector/ on the server) ----------
+
+let syncStream = null;  // the open EventSource, if a sync is being followed
+const shortDate = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const day = (iso) => shortDate.format(new Date(`${iso}T00:00:00Z`));
+const dayRange = (a, b) => (a === b ? day(a) : `${day(a)} – ${day(b)}`);
+
+async function connectSample(key) {
+  showError("start-error", "");
+  const button = $("connect");
+  button.disabled = true;
+  try {
+    const created = await postJson("/api/connections", { sample: key });
+    openConnection(created.connection);
+    followSync(created.sync.id);
+  } catch (err) {
+    showError("start-error", err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// Show a connection's report view; the report itself appears once a sync has finished.
+function openConnection(conn) {
+  const smp = conn.sample;
+  state.brand = { name: smp.name, synthetic: true, sampleKey: null, description: smp.description,
+                  rows: [], geo_type: "metro", kpi: smp.kpi,
+                  connection: { id: conn.id, accountId: conn.account_id } };
+  state.preset = smp.preset;
+  state.signals = null;
+  state.selected = null;
+  state.showAll = false;
+  report = null;
+  $("sync-log").innerHTML = "";
+  $("sync-changes").hidden = true;
+  renderConnection(conn);
+  $("report-title").textContent = smp.name;
+  $("report-meta").textContent = `${presets.find((p) => p.key === smp.preset)?.label || ""} · measured by ${kpiName(smp.kpi)}`;
+  $("synthetic-note").hidden = false;
+  showView();
+  clearMap();
+  syncUrl();
+}
+
+function renderConnection(conn, platformDate) {
+  const parts = [conn.account_id];
+  if (conn.synced_through) {
+    const since = new Date(`${conn.synced_through}T00:00:00Z`);
+    since.setUTCDate(since.getUTCDate() - 27);
+    parts.push(`synced through ${day(conn.synced_through)}`,
+               `report on the last 28 days (${dayRange(since.toISOString().slice(0, 10), conn.synced_through)})`,
+               `${fmt.format(conn.stored_rows)} daily rows stored`);
+  } else {
+    parts.push("not synced yet");
+  }
+  if (platformDate) parts.push(`platform date ${day(platformDate)}`);
+  $("sync-meta").textContent = parts.join(" · ");
+}
+
+async function refreshConnection(platformDate) {
+  const c = state.brand?.connection;
+  if (!c) return;
+  try {
+    renderConnection(await getJson(`/api/connections/${c.id}`), platformDate);
+  } catch { /* the meta line just stays as it was */ }
+}
+
+function setSyncBusy(busy, label) {
+  for (const id of ["sync-now", "advance-1", "advance-7", "disconnect"]) $(id).disabled = busy;
+  const status = $("sync-status");
+  status.textContent = label || "";
+  status.className = `sync-status${busy ? " busy" : ""}`;
+  $("sync-progress").hidden = !busy;
+}
+
+function logLine(text, kind = "") {
+  const li = document.createElement("li");
+  li.className = kind;
+  li.textContent = text;
+  const log = $("sync-log");
+  log.append(li);
+  log.scrollTop = log.scrollHeight;
+}
+
+// Follow a sync's progress over server-sent events, then rebuild the report.
+function followSync(syncId) {
+  const c = state.brand?.connection;
+  if (!c) return;
+  syncStream?.close();
+  $("sync-log-wrap").open = true;
+  $("sync-bar").style.width = "0%";
+  setSyncBusy(true, "Syncing…");
+  let range = null;
+  let startedAt = null;
+  const es = new EventSource(`/api/connections/${c.id}/syncs/${syncId}/events`);
+  syncStream = es;
+  const on = (kind, fn) => es.addEventListener(kind, (e) => {
+    if (syncStream !== es) return;  // superseded (brand changed, or another sync followed)
+    const data = JSON.parse(e.data);
+    startedAt ??= data.at;
+    fn(data);
+  });
+  on("queued", () => logLine("Queued"));
+  on("auth", (d) => logLine(d.reason === "first request"
+    ? "Got an access token from the platform"
+    : `Token rejected (${d.reason}); got a new one`, "auth"));
+  on("started", (d) => {
+    range = [Date.parse(d.since), Date.parse(d.until)];
+    logLine(d.mode === "backfill"
+      ? `Backfill: ${dayRange(d.since, d.until)} from ${d.account}`
+      : `Incremental: ${dayRange(d.since, d.until)}, re-fetching the last 3 synced days for late conversions`);
+  });
+  on("retry", (d) => logLine(`${d.status} ${d.reason}: retrying in ${d.wait_s}s${d.retry_after ? " (Retry-After)" : " (backoff)"}`, "retry"));
+  on("page", (d) => {
+    const parts = [];
+    if (d.inserted) parts.push(`${d.inserted} new`);
+    if (d.updated) parts.push(`${d.updated} updated`);
+    if (d.unchanged) parts.push(`${d.unchanged} unchanged`);
+    if (d.rejected) parts.push(`${d.rejected} rejected (${d.reasons.join("; ")})`);
+    const days = d.first_day ? ` (${dayRange(d.first_day, d.last_day)})` : "";
+    logLine(`Page ${d.page}: ${d.rows} rows${days}: ${parts.join(", ") || "empty"}`, d.updated ? "updated" : "");
+    if (range && d.last_day) {
+      const span = Math.max(1, range[1] - range[0]);
+      $("sync-bar").style.width = `${Math.min(95, ((Date.parse(d.last_day) - range[0]) / span) * 95)}%`;
+    }
+  });
+  on("fetched", (d) => logLine(`Fetched ${fmt.format(d.rows)} rows in ${d.pages} pages: ${fmt.format(d.inserted)} new, ${fmt.format(d.updated)} updated, ${fmt.format(d.unchanged)} unchanged · ${d.requests} requests, ${d.retries} retried`, "summary"));
+  on("report", (d) => {
+    if (d.stage === "started") logLine(`Recomputing the report on ${dayRange(d.since, d.until)} (${d.markets} markets)…`);
+    else { logLine("Report updated", "summary"); renderChanges(d.changes); }
+  });
+  on("done", async (d) => {
+    es.close();
+    syncStream = null;
+    $("sync-bar").style.width = "100%";
+    logLine(`Done in ${(d.at - startedAt).toFixed(1)}s`, "summary");
+    setSyncBusy(false, "Synced");
+    $("sync-log-wrap").open = false;  // the report needs the room; the log is a click away
+    await loadConnectionReport();
+  });
+  on("failed", (d) => {
+    es.close();
+    syncStream = null;
+    logLine(d.error || "The sync failed.", "error");
+    setSyncBusy(false, "Sync failed");
+    refreshConnection();
+  });
+  es.onerror = () => {
+    // The browser reconnects by itself (resuming after the last event id) unless the
+    // stream is closed for good.
+    if (es.readyState === EventSource.CLOSED && syncStream === es) {
+      syncStream = null;
+      logLine("Lost the connection to the progress stream.", "error");
+      setSyncBusy(false, "Disconnected");
+    }
+  };
+}
+
+async function loadConnectionReport() {
+  const c = state.brand?.connection;
+  if (!c) return;
+  try {
+    const res = await getJson(`/api/connections/${c.id}/results`);
+    state.brand.rows = res.rows;
+    await buildReport({ fit: !report });
+    refreshConnection();
+  } catch (err) {
+    showError("error", err.message);
+  }
+}
+
+function renderChanges(changes) {
+  const ul = $("sync-changes");
+  ul.innerHTML = "";
+  const add = (text, cls = "") => { const li = document.createElement("li"); li.className = cls; li.textContent = text; ul.append(li); };
+  if (!changes || changes.first) {
+    add("First sync: the report below is built from the last 28 days of synced results.");
+  } else {
+    const k = state.brand.kpi;
+    const { before, after } = changes.kpi;
+    if (before != null && after != null && changes.window.before) {
+      const exact = (v) => (k === "roas" ? `${v.toFixed(2)}x` : `$${v.toFixed(2)}`);
+      add(`${kpiName(k)} over the last 28 days: ${exact(before)} → ${exact(after)} (now ${dayRange(...changes.window.after)})`, "kpi");
+    }
+    for (const e of changes.entered) add(`${short(e.name)} entered the top 10 at #${e.rank}`, "up");
+    for (const m of changes.moved) add(`${short(m.name)} moved #${m.from} → #${m.to}`, m.to < m.from ? "up" : "down");
+    for (const l of changes.left) add(`${short(l.name)} left the top 10 (was #${l.was})`, "down");
+    if (changes.verdict.before !== changes.verdict.after) add(`Confidence changed: ${changes.verdict.before} → ${changes.verdict.after}`);
+    if (!changes.entered.length && !changes.moved.length && !changes.left.length) add("No change in the top 10 recommendations.");
+  }
+  ul.hidden = false;
+}
+
+async function startSync() {
+  const c = state.brand?.connection;
+  if (!c) return;
+  showError("error", "");
+  try {
+    const resp = await fetch(`/api/connections/${c.id}/syncs`, { method: "POST" });
+    const body = await resp.json();
+    if (resp.status === 409 && body.sync) { followSync(body.sync.id); return; }  // already running: follow it
+    if (!resp.ok) throw new ApiError(body.detail || `Request failed (${resp.status}).`);
+    followSync(body.id);
+  } catch (err) {
+    showError("error", err instanceof ApiError ? err.message : "Can't reach the server.");
+  }
+}
+
+async function advancePlatform(days) {
+  const c = state.brand?.connection;
+  if (!c) return;
+  try {
+    const acct = await postJson(`/mock/ads/_demo/accounts/${c.accountId}/advance`, { days });
+    logLine(`Platform date moved to ${day(acct.current_date)}: new results through ${day(acct.data_through)}. Sync to fetch them.`, "platform");
+    $("sync-log-wrap").open = true;
+    refreshConnection(acct.current_date);
+    $("sync-now").classList.add("primary");
+  } catch (err) {
+    showError("error", err.message);
+  }
+}
+
+async function disconnect() {
+  const c = state.brand?.connection;
+  if (!c) return;
+  try { await api(`/api/connections/${c.id}`, { method: "DELETE" }); } catch { /* gone already */ }
+  changeBrand();
+}
+
+async function restoreConnection(id) {
+  try {
+    const conn = await getJson(`/api/connections/${id}`);
+    openConnection(conn);
+    const latest = conn.latest_sync;
+    if (latest && (latest.status === "queued" || latest.status === "running")) followSync(latest.id);
+    else if (conn.synced_through) {
+      if (latest?.result?.changes) renderChanges(latest.result.changes);
+      await loadConnectionReport();
+    } else startSync();
+  } catch (err) {
+    changeBrand();
+    showError("start-error", err instanceof ApiError && /expire|No such/.test(err.message)
+      ? "That ad-account connection has expired. Connect again below." : err.message);
+  }
+}
+
 // ---------- URL state ----------
 
 function syncUrl() {
@@ -946,6 +1205,8 @@ function syncUrl() {
   if (state.brand?.sampleKey) {
     p.set("sample", state.brand.sampleKey);
     if (state.selected) p.set("metro", state.selected);
+  } else if (state.brand?.connection) {
+    p.set("connection", state.brand.connection.id);
   }
   const qs = p.toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
@@ -956,9 +1217,13 @@ function syncUrl() {
 function setupAbout() {
   const dialog = $("about");
   $("about-open").addEventListener("click", () => dialog.showModal());
-  dialog.addEventListener("close", () => {
+  const remember = () => {
     try { localStorage.setItem("turf-about-seen", "1"); } catch { /* shown again next time */ }
-  });
+  };
+  // "close" fires asynchronously; the button's submit is immediate, so a quick
+  // reload right after dismissing doesn't bring the notice back.
+  dialog.querySelector("form").addEventListener("submit", remember);
+  dialog.addEventListener("close", remember);  // Escape key
   let seen = false;
   try { seen = localStorage.getItem("turf-about-seen") === "1"; } catch { /* not available */ }
   if (!seen) dialog.showModal();
@@ -973,6 +1238,11 @@ function init() {
   $("change-brand").addEventListener("click", changeBrand);
   $("more-recs").addEventListener("click", () => { state.showAll = !state.showAll; renderReport(); });
   $("print-report").addEventListener("click", () => window.print());
+  $("connect").addEventListener("click", () => connectSample($("connect-sample").value));
+  $("sync-now").addEventListener("click", () => { $("sync-now").classList.remove("primary"); startSync(); });
+  $("advance-1").addEventListener("click", () => advancePlatform(1));
+  $("advance-7").addEventListener("click", () => advancePlatform(7));
+  $("disconnect").addEventListener("click", disconnect);
   document.querySelectorAll(".actionbar button[data-format]").forEach((b) =>
     b.addEventListener("click", () => exportCsv(b.dataset.format, b)));
   document.querySelectorAll(".legend button").forEach((b) => b.addEventListener("click", () => {
@@ -1000,7 +1270,10 @@ renderStart();
 await setupLayers();
 const params = new URLSearchParams(location.search);
 const sampleKey = params.get("sample");
-if (sampleKey && samples.some((s) => s.key === sampleKey)) {
+const connectionId = params.get("connection");
+if (connectionId && /^[A-Za-z0-9_-]{10,40}$/.test(connectionId)) {
+  await restoreConnection(connectionId);
+} else if (sampleKey && samples.some((s) => s.key === sampleKey)) {
   const metro = params.get("metro");
   await openSample(sampleKey);
   if (metro && /^[0-9]{5}$/.test(metro) && report) {

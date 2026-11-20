@@ -34,6 +34,13 @@
         <p class="small muted">Fictional brands with synthetic results, to see a full report in one click.</p>
         <div class="sample-cards" id="sample-cards"></div>
 
+        <h3>Or connect a sample ad account</h3>
+        <p class="small muted">A simulated ad platform runs inside this demo. Turf connects to it like a real account and syncs it live: paged API calls, rate limits and retries, conversions that arrive late. <a href="/mock/ads/docs" target="_blank" rel="noopener">The platform's API</a></p>
+        <div class="connect-row">
+          <select id="connect-sample" aria-label="Sample ad account to connect"></select>
+          <button type="button" class="primary" id="connect">Connect and sync</button>
+        </div>
+
         <h3>Or upload a brand's results</h3>
         <div class="upload-box">
           <input id="results-file" class="sr-only" type="file" accept=".csv,.tsv,.txt,text/csv">
@@ -63,6 +70,27 @@
           <button type="button" class="link" id="change-brand">Change brand</button>
         </header>
         <p class="synthetic-note" id="synthetic-note" hidden>Sample brand: fictional, with synthetic results generated to demonstrate the report. The numbers show how Turf works, not real performance.</p>
+
+        <section class="sync-panel" id="sync-panel" hidden aria-labelledby="sync-title">
+          <div class="sync-head">
+            <h3 id="sync-title">Live sync <span class="sync-tag">simulated ad account</span></h3>
+            <span class="sync-status" id="sync-status" role="status"></span>
+          </div>
+          <p class="sync-meta" id="sync-meta"></p>
+          <div class="sync-progress" id="sync-progress" hidden><span id="sync-bar"></span></div>
+          <ul class="sync-changes" id="sync-changes" hidden aria-label="What changed in the last sync"></ul>
+          <div class="sync-actions">
+            <button type="button" id="sync-now">Sync now</button>
+            <button type="button" id="advance-1">Platform +1 day</button>
+            <button type="button" id="advance-7">+7 days</button>
+            <button type="button" class="link" id="disconnect">Disconnect</button>
+          </div>
+          <p class="small muted sync-hint">The platform's date is simulated: move it forward to make new days of results appear, then sync. Each sync re-fetches the last 3 days, because conversions keep arriving after the day ends.</p>
+          <details class="more sync-log-wrap" id="sync-log-wrap">
+            <summary>Sync log</summary>
+            <ol class="sync-log" id="sync-log"></ol>
+          </details>
+        </section>
 
         <section class="r-section" aria-labelledby="focus-title">
           <h3 id="focus-title">Where to focus next</h3>
@@ -161,7 +189,7 @@
     <p>Turf is a demo built for a take-home assignment, not a production service.</p>
     <ul>
       <li><strong>Sample brands are fictional.</strong> Their results are synthetic, generated to show how the report works. They aren't real companies or real performance.</li>
-      <li><strong>No live data ingestion.</strong> A production version would connect to a brand's ad accounts. Here you upload a CSV; it's read in your browser, used for one report, and never stored.</li>
+      <li><strong>No real ad accounts.</strong> A production version would connect to a brand's ad accounts. Here you can upload a CSV (read in your browser, used for one report, and never stored), or connect a <em>simulated</em> ad account: a stand-in platform inside this demo that Turf syncs the way it would a real one. Its synced data is synthetic and deleted within a day.</li>
       <li><strong>No real-time AI generation.</strong> To keep the demo free to run, the creative briefs were written ahead of time for the sample brands' recommendations. Everything else in the report is calculated from data on request.</li>
       <li><strong>The data is real and public:</strong> Overture Maps places (release <span id="about-release">…</span>) and US Census metro areas and population.</li>
       <li><strong>Recommendations are a starting point.</strong> They come from patterns in local businesses, which suggest where an audience lives but don't measure demand. Test before moving budget.</li>

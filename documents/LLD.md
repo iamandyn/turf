@@ -144,7 +144,7 @@ The better row survives: known-open beats unknown status, then higher confidence
 
 ## 3. API
 
-Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn turf_app.api:app` builds it lazily through a module `__getattr__`, so importing the module (e.g. in tests) needs no database.
+Built by `create_app(db_path=None, rate_limiter=None, state_dir=None, platform_fault_rate=None, connector_sleep=None)` in `api.py` (the last three are for the connector; tests pass a temp dir and a no-op sleep). `uvicorn turf_app.api:app` builds it lazily through a module `__getattr__`, so importing the module (e.g. in tests) needs no database.
 
 ### 3.1 Configuration
 
@@ -155,6 +155,10 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 | `TURF_DB_THREADS` | `2` | DuckDB threads per worker |
 | `TURF_COMMIT` | `dev` | Baked into the image by CI (`--build-arg TURF_COMMIT=<sha>`); returned by `/api/meta` |
 | `TURF_CLIENT_IP_HEADER` | unset (image: `X-Client-IP`) | Header holding the real client IP, for rate limiting. Unset means the TCP peer address is used |
+| `TURF_STATE_DIR` | system temp dir (image: `/tmp`, a tmpfs) | Writable directory for the connector's and the simulated platform's SQLite files |
+| `TURF_PLATFORM_FAULT_RATE` | `0.2` | Share of first requests for a page the simulated platform refuses (429 or 503) |
+| `TURF_PLATFORM_SECRET` | `turf-simulated-platform` | HMAC key for the simulated platform's tokens (shared by workers; it only guards synthetic data) |
+| `TURF_ADS_API_BASE` | unset | Point the connector at a platform over the network instead of the in-process simulated one |
 | `TURF_MCP_ALLOWED_HOSTS` | localhost forms + `testserver` (image: adds `turf.dunkasaur.gg`) | Host headers `/mcp` accepts (DNS-rebinding protection) |
 
 **Concurrency:** one DuckDB connection per worker, opened in `lifespan`, and one **cursor per request** (the `Db` dependency); MCP tools take their own cursor per call. Connections aren't thread-safe; cursors are. At startup the app checks that every preset category exists in the data and fails to start otherwise.
@@ -176,6 +180,14 @@ Built by `create_app(db_path=None, rate_limiter=None)` in `api.py`. `uvicorn tur
 | `GET /api/samples` | | `[{key, name, description, preset, kpi, geo_type, synthetic}]` | |
 | `GET /api/samples/{key}` | | the sample with its synthetic `rows` (generated once per process) | 404 |
 | `GET /api/briefs/{preset}/{metro_code}` | | `Brief` | 404 |
+| `POST /api/connections` | `{sample}` | `{connection, sync}`: a simulated account connected, backfill queued (§3.9) | 404 unknown sample |
+| `GET /api/connections/{id}` | | the connection, stored row count, latest sync | 404 (expired) |
+| `DELETE /api/connections/{id}` | | 204; the connection, its jobs and rows are deleted | 404 |
+| `POST /api/connections/{id}/syncs` | | 202, the queued sync | 404; 409 with the active sync |
+| `GET /api/connections/{id}/syncs/{sync}` | | status, mode, range, stats, result (changes), error | 404 |
+| `GET /api/connections/{id}/syncs/{sync}/events` | `Last-Event-ID` header | `text/event-stream` (§3.9) | 404 |
+| `GET /api/connections/{id}/results` | | the report window's per-market rows, shaped for `/api/performance` | 404; 409 nothing synced |
+| `/mock/ads/*` | | the simulated ad platform (its own OpenAPI at `/mock/ads/docs`) | Meta-style `{"error": {...}}` |
 | `POST /mcp` | MCP JSON-RPC (streamable HTTP) | see §3.6 | 421 unknown Host |
 | `/`, `/index.html` | | the page, with versioned asset URLs | |
 
@@ -311,6 +323,36 @@ The rows are used for the request only and never stored.
 - One brand reports by ZIP (8,813 rows), the others by market name.
 - They demonstrate the flow; their verdicts are built in, and the page and README say so.
 
+### 3.9 Ad-account connector (`connector/`)
+
+**Simulated platform** (`platform.py`, mounted at `/mock/ads`; a separate FastAPI app):
+- Accounts: `POST /_demo/accounts {template}` creates one from a sample brand (`act_<hex>`), with a simulated "today" (initially the real UTC date). `POST /_demo/accounts/{id}/advance {days: 1–7}` moves it forward, at most 60 days in total. Accounts live in their own SQLite file; they expire after a day (at most 1,000).
+- Auth: `POST /oauth/access_token` (form: `client_id`, `client_secret`, `account_id`) returns a bearer token `"<account>.<expiry>.<hmac>"`, valid 10 minutes, verifiable by any worker. Missing/invalid → 401 code 190; expired → 190 subcode 463; another account → 403 code 200.
+- `GET /v1/{account}`: name, currency, `current_date`, `data_through` (yesterday on the platform).
+- `GET /v1/{account}/insights?since&until&limit(1–500)&after`: rows `{date_start, date_stop, region, spend: "12.34", actions: [{action_type: "purchase", value: "9"}], action_values?}` ordered by day then market, through `data_through` only. Paging: `paging.cursors.after` (base64 of offset + query; a cursor from another query is a 400) and `paging.next`.
+- Numbers: each metro's monthly totals (`samples.metro_totals`) / 30, × weekday factor (0.85 weekends, 1.06 weekdays), × lognormal(0, 0.12) spend noise; KPI quality = exp(trend × days since the account started / 30 + N(0, 0.18)), trend ~ N(0, 0.12) per metro; purchases stochastically rounded. Plus an `Unknown` market (≈0.4% of spend) each day. Seeded by (sample, metro, day): deterministic.
+- Late conversions: a day's reported purchases and value are × 0.72 / 0.90 / 0.97 when it is 1 / 2 / 3 days old, then final.
+- Faults: the first request for each (query, offset) fails with probability `fault_rate` (¾ as 429 code 17 with `Retry-After: 1`, ¼ as 503 code 2, both `is_transient`); its retry succeeds. Tracked per process: the connector's requests for a sync all come from one process.
+
+**Client** (`client.py`): tokens on first use and on 401/190 (once per request); retries 429, 5xx, timeouts and network errors up to 5 attempts, waiting `Retry-After` if given, else full-jitter exponential backoff from 0.5 s, each wait capped at 8 s; other 4xx fail at once. Rows are parsed into `InsightRow` (date, market, spend, conversions = sum of `purchase` actions, revenue = sum of `purchase` action values; Decimal parsing, non-negative, one day per row); rows that fail are skipped and counted with a reason.
+
+**Store** (`store.py`, SQLite in WAL mode, `$TURF_STATE_DIR/turf-connector.sqlite3`, a connection per operation):
+- `connections(id, sample_key, account_id, created_at, last_seen, synced_through, last_report)`: the id is a 128-bit random token. Idle connections expire after 24 h; at most 300.
+- `syncs(id, connection_id, status, mode, …, heartbeat, stats, result, error)`, with a partial unique index allowing one `queued`/`running` job per connection (a second request gets 409 and the active job). Running jobs heartbeat every page; one silent for 30 s, or queued for 2 minutes, is marked failed when anyone next reads (worker died or restarted).
+- `sync_events(sync_id, seq, at, kind, data)`: the progress log.
+- `insights(connection_id, date, geo, spend, conversions, revenue)` keyed by (connection, date, geo), written with `INSERT … ON CONFLICT DO UPDATE` only when values differ; each upsert counts inserted / updated / unchanged.
+- Deleting a connection cascades to its jobs, events and rows.
+
+**Sync job** (`sync.py`): first sync = backfill of the 28 days through `data_through`; later syncs = from 3 days before the day after `synced_through` through `data_through` (so a sync with nothing new still re-fetches 3 days, picking up late conversions). Pages of 100. Then the report: per-market totals over the 28 days through the newest synced day → `analyze()` with the sample's preset and KPI (limit 15) → summary (window, overall KPI, verdict, recommendations) → diff against the previous summary for the top 10: entered, left, moved (largest moves first, at most 5), KPI and verdict before and after.
+
+**Jobs** (`routes.py`): an asyncio task in the worker that got the request, behind a per-worker semaphore of 2 (others stay `queued`). Shutdown cancels running jobs, which are marked failed. Events, in order: `queued`, `auth`, `started {mode, since, until}`, `retry {status, reason, attempt, wait_s, retry_after}`, `page {page, rows, inserted, updated, unchanged, rejected, reasons, first_day, last_day}`, `fetched {totals}`, `report {stage: started|done, changes}`, then `done` or `failed {error}`.
+
+**Progress stream**: `GET …/events` polls the store every 250 ms and writes `id:`/`event:`/`data:` frames; it resumes after `Last-Event-ID`, sends a keepalive comment after 15 s of quiet, ends after the `done`/`failed` event (or 5 minutes), and sets `Cache-Control: no-cache` and `X-Accel-Buffering: no`. GZip middleware skips `text/event-stream`. Any worker can serve it.
+
+**Frontend**: "Connect and sync" on the start screen → the report view opens with the sync panel only (`.report.awaiting`) and follows the job with `EventSource`. On `done` it loads `/results` into the brand's rows and builds the report through `/api/performance` (so exports and signal adjustments work as for an upload). The panel's buttons start a sync (a 409 means one is running: it follows that one) and call the platform's `advance` control. `?connection=<id>` restores the view.
+
+**Rate limits**: `POST /api/connections*` 20/min, `/mock/*` 120/min per IP.
+
 ---
 
 ## 4. Deployment
@@ -396,7 +438,7 @@ The `production` environment is optional; add required reviewers there to gate d
 
 - **Unit:** `test_normalize.py`, `test_ratelimit.py` (fake clock).
 - **Pipeline:** `test_chains.py` and `test_states.py` build tiny DuckDB tables shaped like real cases and run the real `build()` / `fill_states()`.
-- **Markets and API:** `conftest.py` builds a serving database **with the real `write_serving_db`** from 12 synthetic metros with known category mixes (metro *i* has *i* pet groomers and 12 − *i* dog parks), so rankings are predictable. `test_markets.py` covers ranking, lookalikes, reasons, filters, validation, exports, ZIP assignment, presets and briefs; `test_performance.py` matching, totals, KPI direction, trusted metros, the strong / weak / too-few verdicts, recommendation statuses, exports, validation and the samples end to end; `test_api.py` the page, headers, versioned assets and rate limiting; `test_mcp.py` the MCP endpoint over HTTP. Rate limiting is disabled in the shared client and tested separately.
+- **Markets and API:** `conftest.py` builds a serving database **with the real `write_serving_db`** from 12 synthetic metros with known category mixes (metro *i* has *i* pet groomers and 12 − *i* dog parks), so rankings are predictable. `test_markets.py` covers ranking, lookalikes, reasons, filters, validation, exports, ZIP assignment, presets and briefs; `test_performance.py` matching, totals, KPI direction, trusted metros, the strong / weak / too-few verdicts, recommendation statuses, exports, validation and the samples end to end; `test_api.py` the page, headers, versioned assets and rate limiting; `test_mcp.py` the MCP endpoint over HTTP; `test_connector.py` the simulated platform (auth, paging, late conversions, faults), the client (retries, `Retry-After`, giving up, no retry on 4xx, token refresh, invalid rows) against `httpx.MockTransport`, the store (idempotent upserts, one active job, reaping), sync ranges and diffs, and the API end to end (backfill with injected faults, the event stream and resuming it, an incremental sync after advancing the platform, 409, delete). Rate limiting is disabled in the shared client and tested separately.
 - **Convention:** a test case taken from real data says so in a comment, quoting the actual row ("Real case: …").
-- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (report, dark mode, phone), and walks the report flow: the disclaimer on first visit (and not again), the sample report (5 recommendations with expected results, confidence, drivers, markets today), a recommendation's data and brief, show more, both exports, URL restore, the low-confidence sample, an uploaded report with a category and an unmatched row, adjusting a signal, dark mode, phone layout. Earlier flows it also covered: presets, removing and adding signals, seed metros and lookalikes, the detail panel and its brief, both exports, URL restore, the population filter, a sample brand (verdict, best markets, recommendation tags, export), the no-relationship sample ("No evidence"), an uploaded ad report with real column names, layer toggles, dark mode (kept after reload), phone layout. It runs locally against any base URL, and in CI after every deploy.
+- **Browser:** `scripts/browser_smoke.py` (Playwright, headless Chromium). It fails on any console error, page error, CSP violation or **axe-core accessibility violation** (report, dark mode, phone), and walks the report flow: the disclaimer on first visit (and not again), the sample report (5 recommendations with expected results, confidence, drivers, markets today), a recommendation's data and brief, show more, both exports, URL restore, the low-confidence sample, an uploaded report with a category and an unmatched row, adjusting a signal, connecting a simulated ad account (backfill, report, incremental sync, disconnect), dark mode, phone layout. Earlier flows it also covered: presets, removing and adding signals, seed metros and lookalikes, the detail panel and its brief, both exports, URL restore, the population filter, a sample brand (verdict, best markets, recommendation tags, export), the no-relationship sample ("No evidence"), an uploaded ad report with real column names, layer toggles, dark mode (kept after reload), phone layout. It runs locally against any base URL, and in CI after every deploy.
 - **Not covered by automated tests:** the S3 and Census extract scripts (network, minutes), the shell deploy scripts beyond syntax, and pasting the ZIP export into Meta or Google Ads.

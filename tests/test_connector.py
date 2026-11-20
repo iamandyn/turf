@@ -212,6 +212,9 @@ def test_client_skips_rows_that_dont_parse() -> None:
         {**good, "spend": "lots"},
         {**good, "date_stop": "2026-01-07"},
         {**good, "region": ""},
+        None,  # not an object at all
+        "row",
+        {**good, "actions": 5},  # not a list
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -223,7 +226,7 @@ def test_client_skips_rows_that_dont_parse() -> None:
     (page,) = asyncio.run(pages())
     assert page.rows == [InsightRow.parse(good)]
     assert page.rows[0].conversions == 2 and page.rows[0].revenue == 0  # only purchases count
-    assert len(page.rejected) == 4
+    assert len(page.rejected) == 7
 
 
 # ---------- Store ----------
@@ -258,6 +261,55 @@ def test_one_active_sync_per_connection(tmp_path: Path) -> None:
     assert not store.finish(first.id, "failed")  # already ended: no second "done" event
     assert [ev.kind for ev in store.events(first.id)] == ["done"]
     assert store.create_sync(conn.id).id != first.id
+
+
+def test_client_stops_on_a_repeated_cursor() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = {"data": [], "paging": {"cursors": {"after": "same"}, "next": "/more"}}
+        return _ok_token(request) or httpx.Response(200, json=page)
+
+    async def drain() -> None:
+        async for _ in _client(handler, []).insights(date(2026, 1, 1), date(2026, 1, 2)):
+            pass
+
+    with pytest.raises(PlatformAPIError, match="same page cursor"):
+        asyncio.run(drain())
+
+
+def test_a_reaped_job_stays_dead(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.sqlite3")
+    conn = store.create_connection("pets", "act_1")
+    later = time.time() + 3600
+    day = date(2026, 1, 1)
+
+    # Reaped while queued: it may not start (and can't clash with a newer job).
+    queued = store.create_sync(conn.id)
+    assert store.reap_stale(now=later) == 1
+    newer = store.create_sync(conn.id)
+    assert not store.start(queued.id, "backfill", day, day)
+    assert store.start(newer.id, "backfill", day, day)
+
+    # Reaped while running: heartbeats fail, and it can't succeed or move the connection.
+    assert store.heartbeat(newer.id)
+    assert store.reap_stale(now=later) == 1
+    assert not store.heartbeat(newer.id, {"pages": 1})
+    assert not store.succeed(newer.id, conn.id, day, {"recs": []}, {"changes": {}})
+    fresh = store.get_connection(conn.id)
+    assert fresh is not None and fresh.synced_through is None
+    assert store.last_report(conn.id) is None
+
+
+def test_eviction_spares_connections_mid_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("turf_app.connector.store.MAX_CONNECTIONS", 2)
+    store = Store(tmp_path / "s.sqlite3")
+    busy = store.create_connection("pets", "act_1")
+    store.create_sync(busy.id)
+    idle = store.create_connection("pets", "act_2")
+    store.create_connection("pets", "act_3")  # over the cap: the oldest idle one goes
+    assert store.get_connection(busy.id, touch=False) is not None
+    assert store.get_connection(idle.id, touch=False) is None
 
 
 def test_stale_jobs_are_reaped(tmp_path: Path) -> None:
@@ -296,9 +348,13 @@ def test_diff_reports_entries_exits_and_moves() -> None:
 
     assert sync_mod.diff(None, summary("a")) == {"first": True}
     d = sync_mod.diff(summary("a", "b", "c"), summary("c", "a", "d"))
-    assert d["entered"] == [{"name": "D", "rank": 3}]
-    assert d["left"] == [{"name": "B", "was": 2}]
-    assert d["moved"] == [{"name": "C", "from": 3, "to": 1}, {"name": "A", "from": 1, "to": 2}]
+    assert d["entered"] == [{"code": "d", "name": "D", "rank": 3}]
+    assert d["left"] == [{"code": "b", "name": "B", "was": 2}]
+    assert d["moved"] == [
+        {"code": "c", "name": "C", "from": 3, "to": 1},
+        {"code": "a", "name": "A", "from": 1, "to": 2},
+    ]
+    assert d["previous_rank"] == {"c": 3, "a": 1, "d": None}
 
 
 # ---------- API, end to end ----------
@@ -310,7 +366,7 @@ def app_client(serving_db: Path, tmp_path: Path) -> Iterator[TestClient]:
         serving_db,
         rate_limiter=RateLimiter(rules=()),
         state_dir=tmp_path,
-        platform_fault_rate=0.3,
+        platform_fault_rate=1.0,
         connector_sleep=no_sleep,
     )
     # The test database's metros are few and small; let the report use all of them.
@@ -353,7 +409,8 @@ def test_connect_backfill_then_incremental(app_client: TestClient) -> None:
     assert backfill["status"] == "succeeded", backfill["error"]
     assert backfill["mode"] == "backfill"
     assert backfill["stats"]["inserted"] == backfill["stats"]["rows"] > 0
-    assert backfill["stats"]["retries"] > 0  # the platform refused some first requests
+    # Fault rate 1: every page is refused once (429 or 503), then served.
+    assert backfill["stats"]["retries"] == backfill["stats"]["pages"] > 0
     assert backfill["result"]["changes"] == {"first": True}
 
     kinds = [k for k, _ in _events(app_client, cid, sid)]

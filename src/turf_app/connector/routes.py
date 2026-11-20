@@ -31,7 +31,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from turf_app import samples
 from turf_app.connector.client import RetryPolicy, Sleep
@@ -74,15 +74,19 @@ class ConnectorService:
 
     async def create_account(self, sample_key: str) -> str:
         """Create the simulated ad account (the platform's demo control)."""
-        async with self.http() as http:
-            resp = await http.post("/_demo/accounts", json={"template": sample_key})
-            resp.raise_for_status()
-            account_id: str = resp.json()["id"]
-            return account_id
+        try:
+            async with self.http() as http:
+                resp = await http.post("/_demo/accounts", json={"template": sample_key})
+                resp.raise_for_status()
+                account_id: str = resp.json()["id"]
+                return account_id
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            raise HTTPException(502, "The ad platform couldn't create the account.") from e
 
-    def start_sync(self, connection: Connection) -> Sync:
-        sync = self.store.create_sync(connection.id)  # raises ActiveSyncError
-        self.store.add_event(sync.id, "queued", {})
+    async def start_sync(self, connection: Connection) -> Sync:
+        # SQLite calls go to a thread: they can wait on a lock, and this is the event loop.
+        sync = await asyncio.to_thread(self.store.create_sync, connection.id)  # ActiveSyncError
+        await asyncio.to_thread(self.store.add_event, sync.id, "queued", {})
         try:
             task = asyncio.create_task(self._run(connection, sync.id))
         except BaseException:
@@ -96,13 +100,21 @@ class ConnectorService:
     async def _run(self, connection: Connection, sync_id: str) -> None:
         if self._slots is None:
             self._slots = asyncio.Semaphore(MAX_CONCURRENT_SYNCS)
-        async with self._slots:
+        try:
+            await self._slots.acquire()
+        except asyncio.CancelledError:
+            # Shut down while still queued: run_sync never started, so end it here.
+            self.store.finish(sync_id, "failed", error="The server shut down before the sync ran.")
+            raise
+        try:
             # Re-read: another sync may have advanced it while this one waited.
-            fresh = self.store.get_connection(connection.id, touch=False)
+            fresh = await asyncio.to_thread(self.store.get_connection, connection.id, False)
             if fresh is None:
                 self.store.finish(sync_id, "failed", error="The connection was deleted.")
                 return
             await run_sync(self.deps, fresh, sync_id)
+        finally:
+            self._slots.release()
 
     async def shutdown(self) -> None:
         for task in list(self._tasks):
@@ -191,9 +203,10 @@ def build_router(service: Callable[[], ConnectorService]) -> APIRouter:
             raise HTTPException(404, f"Unknown sample: {body.sample}")
         svc = service()
         account_id = await svc.create_account(body.sample)
-        conn = svc.store.create_connection(body.sample, account_id)
-        sync = svc.start_sync(conn)
-        return CreatedConnection(connection=_out(conn), sync=_sync_out(sync))
+        conn = await asyncio.to_thread(svc.store.create_connection, body.sample, account_id)
+        sync = await svc.start_sync(conn)
+        out = await asyncio.to_thread(_out, conn)
+        return CreatedConnection(connection=out, sync=_sync_out(sync))
 
     @router.get("/{connection_id}")
     def get_connection(connection_id: str) -> ConnectionOut:
@@ -216,11 +229,11 @@ def build_router(service: Callable[[], ConnectorService]) -> APIRouter:
     async def start_sync(connection_id: str) -> SyncOut | JSONResponse:
         # async: the job is an asyncio task on this worker's event loop.
         svc = service()
-        conn = _connection(connection_id)
+        conn = await asyncio.to_thread(_connection, connection_id)
         try:
-            return _sync_out(svc.start_sync(conn))
+            return _sync_out(await svc.start_sync(conn))
         except ActiveSyncError as e:
-            active = svc.store.get_sync(e.sync_id)
+            active = await asyncio.to_thread(svc.store.get_sync, e.sync_id)
             return JSONResponse(
                 status_code=409,
                 content={
@@ -245,7 +258,7 @@ def build_router(service: Callable[[], ConnectorService]) -> APIRouter:
         """Server-sent events: ``queued``, ``auth``, ``started``, ``retry``, ``page``,
         ``fetched``, ``report``, then ``done`` or ``failed``. Resumes after
         ``Last-Event-ID``, so a dropped connection picks up where it left off."""
-        _sync(connection_id, sync_id)
+        await asyncio.to_thread(_sync, connection_id, sync_id)
         store = service().store
         header = request.headers.get("last-event-id", "0")
         last = int(header) if header.isdigit() else 0
@@ -258,7 +271,8 @@ def build_router(service: Callable[[], ConnectorService]) -> APIRouter:
             while time.monotonic() - started < STREAM_MAX_S:
                 if await request.is_disconnected():
                     return
-                for e in store.events(sync_id, last):
+                # The store is SQLite: poll it from a thread, not on the event loop.
+                for e in await asyncio.to_thread(store.events, sync_id, last):
                     last = e.seq
                     payload = json.dumps({"at": e.at, **e.data})
                     yield f"id: {e.seq}\nevent: {e.kind}\ndata: {payload}\n\n"
@@ -267,7 +281,8 @@ def build_router(service: Callable[[], ConnectorService]) -> APIRouter:
                         return
                 now = time.monotonic()
                 if now - reaped_at > 5:
-                    store.reap_stale()  # a job whose worker died ends with "failed"
+                    # A job whose worker died ends with "failed".
+                    await asyncio.to_thread(store.reap_stale)
                     reaped_at = now
                 if now - quiet_since > STREAM_KEEPALIVE_S:
                     yield ": keepalive\n\n"
@@ -289,7 +304,10 @@ def build_router(service: Callable[[], ConnectorService]) -> APIRouter:
         conn = _connection(connection_id)
         if conn.synced_through is None:
             raise HTTPException(409, "Nothing synced yet.")
-        req = report_request(service().store, conn, conn.synced_through)
+        try:
+            req = report_request(service().store, conn, conn.synced_through)
+        except ValidationError as e:
+            raise HTTPException(409, "The last 28 synced days have no usable results.") from e
         since, until = report_window(conn.synced_through)
         return ConnectionResults(
             sample=samples.info(samples.SAMPLES[conn.sample_key]),

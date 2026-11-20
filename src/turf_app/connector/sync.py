@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from datetime import date, timedelta
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from turf_app.connector.client import AdsClient, PlatformAPIError, RetryPolicy, Sleep
 from turf_app.connector.store import Connection, Store
@@ -127,7 +129,7 @@ def diff(before: dict[str, Any] | None, after: dict[str, Any]) -> dict[str, Any]
     new = {r["code"]: r for r in after["recs"][:DIFF_TOP]}
     moved = sorted(
         (
-            {"name": r["name"], "from": old[c]["rank"], "to": r["rank"]}
+            {"code": c, "name": r["name"], "from": old[c]["rank"], "to": r["rank"]}
             for c, r in new.items()
             if c in old and old[c]["rank"] != r["rank"]
         ),
@@ -135,21 +137,30 @@ def diff(before: dict[str, Any] | None, after: dict[str, Any]) -> dict[str, Any]
     )
     return {
         "first": False,
-        "entered": [{"name": r["name"], "rank": r["rank"]} for c, r in new.items() if c not in old],
-        "left": [{"name": r["name"], "was": r["rank"]} for c, r in old.items() if c not in new],
-        "moved": moved[:5],
+        "entered": [
+            {"code": c, "name": r["name"], "rank": r["rank"]}
+            for c, r in new.items()
+            if c not in old
+        ],
+        "left": [
+            {"code": c, "name": r["name"], "was": r["rank"]} for c, r in old.items() if c not in new
+        ],
+        "moved": moved[:5],  # the biggest moves, for the summary
+        # Every top-10 recommendation's previous rank (None = new), to mark the cards.
+        "previous_rank": {c: old[c]["rank"] if c in old else None for c in new},
         "kpi": {"before": before.get("kpi_value"), "after": after.get("kpi_value")},
         "verdict": {"before": before.get("verdict"), "after": after.get("verdict")},
         "window": {"before": before.get("window"), "after": after.get("window")},
     }
 
 
+class _Abandoned(Exception):
+    """The job was reaped as stale (or deleted) while it ran: stop without a trace.
+    Whoever reaped it already recorded the failure."""
+
+
 async def run_sync(deps: SyncDeps, connection: Connection, sync_id: str) -> None:
     store = deps.store
-
-    def emit(kind: str, data: dict[str, Any]) -> None:
-        store.add_event(sync_id, kind, data)
-
     stats = {
         "pages": 0,
         "rows": 0,
@@ -160,6 +171,19 @@ async def run_sync(deps: SyncDeps, connection: Connection, sync_id: str) -> None
         "retries": 0,
         "requests": 0,
     }
+    running = False
+
+    def alive() -> None:
+        if running and not store.heartbeat(sync_id):
+            raise _Abandoned
+
+    def emit(kind: str, data: dict[str, Any]) -> None:
+        # Retries and token refreshes happen between pages and can take a while
+        # (Retry-After, backoff): each one also counts as a heartbeat.
+        if kind in ("retry", "auth"):
+            alive()
+        store.add_event(sync_id, kind, data)
+
     try:
         async with deps.http() as http:
             client = AdsClient(
@@ -174,7 +198,9 @@ async def run_sync(deps: SyncDeps, connection: Connection, sync_id: str) -> None
             account = await client.account()
             data_through = date.fromisoformat(account["data_through"])
             mode, since, until = sync_range(connection.synced_through, data_through)
-            store.start(sync_id, mode, since, until)
+            if not store.start(sync_id, mode, since, until):
+                raise _Abandoned  # reaped while it waited for a slot
+            running = True
             emit(
                 "started",
                 {
@@ -195,7 +221,8 @@ async def run_sync(deps: SyncDeps, connection: Connection, sync_id: str) -> None
                 stats["unchanged"] += up.unchanged
                 stats["rejected"] += len(page.rejected)
                 stats["retries"], stats["requests"] = client.retries, client.requests
-                store.heartbeat(sync_id, stats)
+                if not store.heartbeat(sync_id, stats):
+                    raise _Abandoned
                 days = sorted({r.day for r in page.rows})
                 emit(
                     "page",
@@ -225,19 +252,37 @@ async def run_sync(deps: SyncDeps, connection: Connection, sync_id: str) -> None
                 "until": window[1].isoformat(),
             },
         )
+        alive()
         report = await asyncio.to_thread(deps.analyze, req)
         summary = summarize(report, *window)
         changes = diff(store.last_report(connection.id), summary)
-        store.complete_sync(sync_id, connection.id, through, summary)
-        emit("report", {"stage": "done", "verdict": report.check.verdict, "changes": changes})
-        store.heartbeat(sync_id, stats)
-        store.finish(sync_id, "succeeded", result={"changes": changes, "summary": summary})
+        result = {"changes": changes, "summary": summary}
+        # The job's status and the connection's progress change together, or not at all.
+        if not store.succeed(sync_id, connection.id, through, summary, result):
+            raise _Abandoned
+        store.add_event(
+            sync_id,
+            "report",
+            {"stage": "done", "verdict": report.check.verdict, "changes": changes},
+        )
+        store.add_event(sync_id, "done", {"status": "succeeded", "error": None})
+    except _Abandoned:
+        log.info("sync %s stopped: it was reaped or its connection deleted", sync_id)
     except PlatformAPIError as e:
         store.heartbeat(sync_id, stats)
         store.finish(sync_id, "failed", error=f"The ad platform refused the sync: {e}")
     except (NoUsableMetrosError, UniverseTooSmallError) as e:
         # The data synced; it just can't support a report (yet).
         store.finish(sync_id, "failed", error=f"Synced, but no report: {e}")
+    except ValidationError:
+        # The window has no rows, or none with the KPI's column (e.g. no conversions).
+        store.finish(sync_id, "failed", error="Synced, but the last 28 days can't make a report.")
+    except sqlite3.IntegrityError:
+        if store.get_connection(connection.id, touch=False) is None:
+            log.info("sync %s stopped: its connection was deleted", sync_id)
+            return
+        log.exception("sync %s failed", sync_id)
+        store.finish(sync_id, "failed", error="The sync failed unexpectedly.")
     except asyncio.CancelledError:
         store.finish(sync_id, "failed", error="The server shut down during the sync.")
         raise

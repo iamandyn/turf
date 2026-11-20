@@ -189,10 +189,16 @@ class Store:
         )
         with self._db() as db:
             # Bounded: expire idle connections, then cap the total (oldest go first).
-            db.execute("DELETE FROM connections WHERE last_seen < ?", [now - CONNECTION_TTL_S])
+            # Never evict one mid-sync: its job would lose its rows under it.
+            busy = "SELECT connection_id FROM syncs WHERE status IN ('queued', 'running')"
             db.execute(
-                "DELETE FROM connections WHERE id NOT IN "
-                "(SELECT id FROM connections ORDER BY last_seen DESC LIMIT ?)",
+                f"DELETE FROM connections WHERE last_seen < ? AND id NOT IN ({busy})",
+                [now - CONNECTION_TTL_S],
+            )
+            db.execute(
+                "DELETE FROM connections WHERE id IN (SELECT id FROM connections "
+                f"WHERE id NOT IN ({busy}) ORDER BY last_seen LIMIT "
+                "max(0, (SELECT count(*) FROM connections) - ?))",
                 [MAX_CONNECTIONS - 1],
             )
             db.execute(
@@ -293,21 +299,35 @@ class Store:
             ).fetchone()
         return _sync(row) if row else None
 
-    def start(self, sync_id: str, mode: str, since: date, until: date) -> None:
+    def start(self, sync_id: str, mode: str, since: date, until: date) -> bool:
+        """Mark a queued job running. False if it's no longer queued (reaped while it
+        waited for a slot): the caller must not run it."""
         now = time.time()
         with self._db() as db:
-            db.execute(
-                "UPDATE syncs SET status = 'running', mode = ?, since = ?, until = ?, "
-                "started_at = ?, heartbeat = ? WHERE id = ?",
-                [mode, since.isoformat(), until.isoformat(), now, now, sync_id],
+            return (
+                db.execute(
+                    "UPDATE syncs SET status = 'running', mode = ?, since = ?, until = ?, "
+                    "started_at = ?, heartbeat = ? WHERE id = ? AND status = 'queued'",
+                    [mode, since.isoformat(), until.isoformat(), now, now, sync_id],
+                ).rowcount
+                > 0
             )
 
-    def heartbeat(self, sync_id: str, stats: dict[str, int]) -> None:
+    def heartbeat(self, sync_id: str, stats: dict[str, int] | None = None) -> bool:
+        """Show the job is alive. False if it isn't running any more (reaped): the
+        caller must stop."""
         with self._db() as db:
-            db.execute(
-                "UPDATE syncs SET heartbeat = ?, stats = ? WHERE id = ?",
-                [time.time(), json.dumps(stats), sync_id],
-            )
+            if stats is None:
+                cur = db.execute(
+                    "UPDATE syncs SET heartbeat = ? WHERE id = ? AND status = 'running'",
+                    [time.time(), sync_id],
+                )
+            else:
+                cur = db.execute(
+                    "UPDATE syncs SET heartbeat = ?, stats = ? WHERE id = ? AND status = 'running'",
+                    [time.time(), json.dumps(stats), sync_id],
+                )
+            return cur.rowcount > 0
 
     def finish(
         self,
@@ -417,12 +437,31 @@ class Store:
             ).fetchone()
         return int(row[0])
 
-    def complete_sync(
-        self, sync_id: str, connection_id: str, through: date, report: dict[str, Any]
-    ) -> None:
-        """Record what a successful sync reached and the report it produced."""
+    def succeed(
+        self,
+        sync_id: str,
+        connection_id: str,
+        through: date,
+        report: dict[str, Any],
+        result: dict[str, Any],
+    ) -> bool:
+        """End a running job as succeeded *and* advance its connection, in one
+        transaction: either both happen or, if the job was reaped meanwhile, neither."""
         with self._db() as db:
-            db.execute(
-                "UPDATE connections SET synced_through = ?, last_report = ? WHERE id = ?",
-                [through.isoformat(), json.dumps(report), connection_id],
-            )
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                ended = db.execute(
+                    "UPDATE syncs SET status = 'succeeded', finished_at = ?, result = ? "
+                    "WHERE id = ? AND status = 'running'",
+                    [time.time(), json.dumps(result), sync_id],
+                ).rowcount
+                if ended:
+                    db.execute(
+                        "UPDATE connections SET synced_through = ?, last_report = ? WHERE id = ?",
+                        [through.isoformat(), json.dumps(report), connection_id],
+                    )
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+        return ended > 0

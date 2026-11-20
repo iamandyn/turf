@@ -33,6 +33,8 @@ EventSink = Callable[[str, dict[str, Any]], None]
 Sleep = Callable[[float], Awaitable[None]]
 
 CONVERSION_ACTION = "purchase"
+# A guard against a platform bug that never stops returning a next page.
+MAX_PAGES = 10_000
 
 
 @dataclass(frozen=True)
@@ -82,7 +84,10 @@ class InsightRow(BaseModel):
         return float(d)
 
     @classmethod
-    def parse(cls, raw: dict[str, Any]) -> InsightRow:
+    def parse(cls, raw: object) -> InsightRow:
+        if not isinstance(raw, dict):
+            raise ValueError(f"expected an object, got {type(raw).__name__}")
+
         def action_total(key: str) -> str:
             items = [_Action.model_validate(a) for a in raw.get(key) or []]
             return str(
@@ -223,8 +228,11 @@ class AdsClient:
             "limit": page_size,
         }
         number = 0
+        cursors: set[str] = set()
         while True:
             number += 1
+            if number > MAX_PAGES:
+                raise PlatformAPIError(f"Stopped after {MAX_PAGES} pages; the paging never ended.")
             resp = await self._send("GET", f"/v1/{self._account}/insights", params=params)
             body = resp.json()
             rows: list[InsightRow] = []
@@ -232,12 +240,15 @@ class AdsClient:
             for raw in body.get("data") or []:
                 try:
                     rows.append(InsightRow.parse(raw))
-                except (ValidationError, ValueError, InvalidOperation) as e:
+                except (ValidationError, ValueError, TypeError, InvalidOperation) as e:
                     rejected.append(_reason(e))
             yield Page(number=number, rows=rows, rejected=rejected)
             after = ((body.get("paging") or {}).get("cursors") or {}).get("after")
             if not after or not (body.get("paging") or {}).get("next"):
                 return
+            if after in cursors:
+                raise PlatformAPIError("The platform returned the same page cursor twice.")
+            cursors.add(after)
             params["after"] = after
 
 

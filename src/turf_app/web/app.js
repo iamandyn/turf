@@ -12,6 +12,7 @@ const state = {
   signals: null,   // null = the preset's; an array once adjusted
   selected: null,  // metro code highlighted in the report and on the map
   showAll: false,
+  previousRank: null,  // after an incremental sync: metro code -> rank before it (null = new)
 };
 let presets = [];
 let samples = [];
@@ -240,6 +241,7 @@ function buildFromUpload() {
 }
 
 function changeBrand() {
+  state.previousRank = null;
   syncStream?.close();
   syncStream = null;
   setSyncBusy(false);
@@ -297,6 +299,7 @@ function renderReport() {
   const r = report, b = state.brand, k = r.kpi;
   $("report-title").textContent = b.name;
   $("synthetic-note").hidden = !b.synthetic;
+  $("live-hint").hidden = !b.sampleKey;
   $("report-meta").textContent = `${presetLabel()} · ${fmt.format(r.metros.length)} markets · ${money.format(r.total_spend)} spend · measured by ${kpiName(k)}`;
 
   // Where to focus next
@@ -309,7 +312,12 @@ function renderReport() {
   const more = $("more-recs");
   const extra = r.recommendations.results.length - TOP_RECS;
   more.hidden = extra <= 0;
-  more.textContent = state.showAll ? "Show the top 5 only" : `Show ${extra} more`;
+  // After a sync, say when the changes are among the hidden recommendations.
+  const hiddenChanges = state.previousRank && !state.signals
+    ? r.recommendations.results.slice(TOP_RECS).filter((x) => x.metro_code in state.previousRank && state.previousRank[x.metro_code] !== x.rank).length
+    : 0;
+  more.textContent = state.showAll ? "Show the top 5 only"
+    : `Show ${extra} more${hiddenChanges ? ` (${hiddenChanges} changed in the last sync)` : ""}`;
 
   // Trust
   const labels = { strong: "High", moderate: "Medium", weak: "Low", too_few: "Not enough data" };
@@ -428,7 +436,10 @@ function recCard(rec, d) {
   const status = document.createElement("span");
   status.className = "status-tag";
   status.textContent = d.status === "low_spend" ? `low spend (${money.format(d.spend)})` : "not running yet";
-  head.append(rank, name, status);
+  head.append(rank, name);
+  const change = rankChange(rec);
+  if (change) head.append(change);
+  head.append(status);
 
   const summary = document.createElement("div");
   summary.className = "rec-summary";
@@ -496,6 +507,25 @@ function stat(label, value, sub, cls = "") {
   s.textContent = sub;
   box.append(l, v, s);
   return box;
+}
+
+// How a recommendation moved in the last sync, while the report uses the sync's signals.
+function rankChange(rec) {
+  if (!state.previousRank || state.signals || !(rec.metro_code in state.previousRank)) return null;
+  const before = state.previousRank[rec.metro_code];
+  if (before === rec.rank) return null;
+  const tag = document.createElement("span");
+  if (before === null) {
+    tag.className = "rank-change new";
+    tag.textContent = "new";
+    tag.title = "Entered the top 10 in the last sync";
+  } else {
+    const up = before > rec.rank;
+    tag.className = `rank-change ${up ? "up" : "down"}`;
+    tag.textContent = `${up ? "▲" : "▼"} ${Math.abs(before - rec.rank)}`;
+    tag.title = `Was #${before} before the last sync`;
+  }
+  return tag;
 }
 
 function recDetails(rec, d) {
@@ -984,6 +1014,7 @@ function openConnection(conn) {
   state.signals = null;
   state.selected = null;
   state.showAll = false;
+  state.previousRank = null;
   report = null;
   $("sync-log").innerHTML = "";
   $("sync-changes").hidden = true;
@@ -1126,6 +1157,7 @@ async function loadConnectionReport() {
 function renderChanges(changes) {
   const ul = $("sync-changes");
   ul.innerHTML = "";
+  state.previousRank = changes && !changes.first ? changes.previous_rank || null : null;
   const add = (text, cls = "") => { const li = document.createElement("li"); li.className = cls; li.textContent = text; ul.append(li); };
   if (!changes || changes.first) {
     add("First sync: the report below is built from the last 28 days of synced results.");
@@ -1239,6 +1271,10 @@ function init() {
   $("more-recs").addEventListener("click", () => { state.showAll = !state.showAll; renderReport(); });
   $("print-report").addEventListener("click", () => window.print());
   $("connect").addEventListener("click", () => connectSample($("connect-sample").value));
+  $("live-hint-connect").addEventListener("click", () => {
+    const key = state.brand?.sampleKey;
+    if (key) { $("connect-sample").value = key; connectSample(key); }
+  });
   $("sync-now").addEventListener("click", () => { $("sync-now").classList.remove("primary"); startSync(); });
   $("advance-1").addEventListener("click", () => advancePlatform(1));
   $("advance-7").addEventListener("click", () => advancePlatform(7));

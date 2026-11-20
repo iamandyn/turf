@@ -448,3 +448,26 @@ dialog.about h2 { text-transform: none; letter-spacing: 0; display: block; }
 .sync-log .error { color: var(--error); font-weight: 700; }
 .sync-log .platform, .sync-log .auth { color: var(--muted); }
 @media print { .sync-panel { display: none !important; } }
+
+/* Rank change since the last sync, on a recommendation card. */
+.rank-change { font-size: 11.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rank-change.up, .rank-change.new { background: var(--target-bg); color: var(--accent-ink); }
+.rank-change.down { background: var(--tag-bg); color: var(--muted); }
+
+/* Pointers to the live sync. */
+.live-badge {
+  font-size: 10.5px; letter-spacing: .04em; padding: 1px 7px; border-radius: 999px; margin-left: 6px;
+  background: var(--own-bg); border: 1px solid var(--own-line); color: var(--text); vertical-align: 1px;
+}
+.live-hint { margin: 0; font-size: 13px; color: var(--muted); display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.live-hint button.link { font-size: 13px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--own); flex: none; }
+@media print { .live-hint { display: none !important; } }
+
+/* Phones: keep the sync panel short so the recommendations stay close. */
+@media (max-width: 800px) {
+  .sync-hint { display: none; }
+  .sync-meta { font-size: 12px; }
+  .sync-actions #disconnect { margin-left: 0; }
+  .sync-log { max-height: 160px; }
+}

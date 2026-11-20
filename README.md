@@ -2,7 +2,7 @@
 
 > **A brand's ad results in, a market report out: where its ads should run next, what to expect there, and the data behind each recommendation.**
 
-**Live demo:** https://turf.dunkasaur.gg (open a sample brand for a full report in one click)
+**Live demo:** https://turf.dunkasaur.gg (open a sample brand for a full report in one click, or connect a sample ad account to watch Turf sync it live and update the report)
 
 ![A sample pet-care app's market report: recommended metros with expected CPA from the brand's most similar markets, and a map of best, current and recommended markets](documents/img/turf-report.png)
 

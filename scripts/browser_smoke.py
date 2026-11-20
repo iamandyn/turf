@@ -88,6 +88,7 @@ def main() -> None:
             and "not running yet" in first.inner_text()
             and "confidence" in badge
             and page.locator("#synthetic-note").is_visible()
+            and page.locator("#live-hint").is_visible()
             and page.locator("#drivers li").count() >= 1
             and page.locator("#today-best li").count() == 5
             and f"sample={args.sample}" in page.url,

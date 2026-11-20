@@ -63,6 +63,8 @@ I got here in steps. The first version was a geo-conquesting tool (ads around co
 - **No-build frontend.** Plain JavaScript and MapLibre, served by the same container. Light and dark themes, a print layout, axe-checked for accessibility.
 - **CI/CD:** every merge to `main` runs lint, strict typing and 145 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back on failure. CI then drives the live site in a real browser, with an accessibility check.
 
+![The live sync: a simulated ad account synced a week later. The panel lists what changed in the report (CPA over the last 28 days, metros that entered, moved or left the top 10), and the sync log shows each page with new and updated rows](documents/img/turf-live-sync.png)
+
 **Not built (yet):**
 - Connections to real ad accounts (the connector syncs the simulated platform; pointing it at a real one means OAuth with that platform and its field names).
 - Measured demand: demographics, income, search volume.

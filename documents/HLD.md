@@ -12,9 +12,9 @@ Turf turns **a brand's ad results by location into a market report**: the metro 
 
 The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The same analysis is available to AI agents as MCP tools. Instead of uploading, a visitor can connect a **simulated ad account**: Turf syncs it through an API like a production connector would and updates the report as new days arrive.
 
-**Users:** media buyers at an agency like Valid, an AI-native agency whose clients are national consumer brands (subscription apps, DTC, health & fitness, home services) buying on Meta, TikTok and Google. Those brands buy by geography but have no stores, so the question isn't "where are our competitors" but "where else looks like the markets that work for us".
+**Users:** media buyers and strategists, at performance-marketing agencies or on in-house growth teams, running ads for national consumer brands (subscription apps, DTC, health & fitness, home services) on Meta, TikTok and Google. Those brands buy by geography but have no stores, so the question isn't "where are our competitors" but "where else looks like the markets that work for us".
 
-**History:** the first version was a geo-conquesting tool (target lists around competitors' stores), rebuilt after checking that almost none of Valid's clients have physical locations. A second version was a configurable market explorer (presets, signals, seed metros, filters); it was simplified into this single flow because it was confusing. The data pipeline and the engineering carried over each time.
+**History:** the first version was a geo-conquesting tool (target lists around competitors' stores), rebuilt after recognizing that the brands buying ads this way mostly have no physical locations. A second version was a configurable market explorer (presets, signals, seed metros, filters); it was simplified into this single flow because it was confusing. The data pipeline and the engineering carried over each time.
 
 **Why Overture + Census:** Overture says where every business is and what kind it is, for the whole US, for free. That's enough to describe what each metro is like. The Census adds what Overture lacks: metro boundaries, population and growth. Neither measures demand, so Turf presents signals as a proxy, and the way to validate them is the brand's own results by metro.
 
@@ -74,7 +74,7 @@ The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The sa
 
 | Decision | Why | Cost |
 |---|---|---|
-| **Market selection, not geo-conquesting** (the pivot) | Valid's clients are national consumer brands without stores; they buy by geography, so "which metros next" is their question | the conquesting features were removed (they remain in git history) |
+| **Market selection, not geo-conquesting** (the pivot) | The target brands are national consumer brands without stores; they buy by geography, so "which metros next" is their question | the conquesting features were removed (they remain in git history) |
 | **Signals are shares of local businesses, not per-capita rates** | Overture's coverage varies 3× between metros (2,100 to 6,200 open places per 100k people), so per-capita rates would partly measure mapping quality | Shares are diluted in metros with many of some other kind of business |
 | **Check the signals against the brand's results, with a permutation test** | The signals are a proxy; a brand's results are the only ground truth. Leave-one-out avoids overfitting the weights, but its score is biased upward, so 999 shufflings set the chance level | 0.15 s per analysis; needs at least 6 metros with enough spend |
 | **Uploaded results are never stored** | Client-confidential data; no accounts to build or data to secure | Nothing is remembered between visits |
@@ -86,11 +86,11 @@ The report exports as ZIP lists for Meta and Google Ads, a CSV, or a PDF. The sa
 | **One flow: data in, report out** | The configurable explorer (presets, signals, seeds, filters) was confusing; a strategist wants an answer and the evidence for it | Exploration without data is API/MCP-only (`/api/markets`, `rank_markets`) |
 | **Ask the brand's category, don't detect it** | Trying every category and keeping the best fit would inflate the confidence numbers; the user already knows | One question before the report |
 | **Expected results from similar markets** | Easy to check and honest about spread: the median and range of the brand's three most similar existing markets | A rough estimate, labelled as such |
-| **Pre-written briefs, no live LLM calls; a disclaimer dialog** | It's a take-home demo: the live site must cost nothing to run, and visitors should know the samples are fictional | Briefs exist only for the sample brands' top recommendations (20) |
+| **Pre-written briefs, no live LLM calls; a disclaimer dialog** | It's a public demo: the live site must cost nothing to run, and visitors should know the samples are fictional | Briefs exist only for the sample brands' top recommendations (20) |
 | **A connector against a simulated platform** | Shows the integration work a real connector needs (auth, paging, retries, idempotency, incremental sync, background jobs, live progress) with no ad account and no API cost | The platform's behavior is ours, so the connector is proven against a model of Meta's API, not Meta's |
 | **Connector state in SQLite under `/tmp`** | Two workers in a read-only container: job state and progress must be shared, and SQLite in WAL mode needs no extra service | State is lost on restart (fine for synthetic demo data); a multi-host deployment would move it to Postgres |
 | **Synced data is kept, uploads are not** | Synced data is synthetic and incremental sync needs history; uploads are client data | Connections expire after a day of inactivity, and can be deleted at once ("Disconnect") |
-| **MCP server in the same app** | Valid already gives clients an MCP server for their account; agents are how an AI-native agency would use this | A runtime dependency (MCP SDK) |
+| **MCP server in the same app** | Marketing teams increasingly query their ad accounts through AI agents; an MCP server lets those agents use the same analysis | A runtime dependency (MCP SDK) |
 | **Precompute offline, serve aggregates** | The served file is 5.5 MB; queries take milliseconds; no database server | A data refresh means rerunning the pipeline (~5 minutes) |
 | **Pinned Overture release** | Reproducible results; the release is shown in `/api/meta` | Someone has to run the pipeline monthly |
 | **Docker + GHCR + SSH forced command** | Immutable, rollback-able releases; the CI key can only deploy a SHA | Server setup is a separate, manual step |

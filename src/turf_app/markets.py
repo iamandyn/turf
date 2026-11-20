@@ -50,8 +50,8 @@ class Preset:
     categories: tuple[str, ...]
 
 
-# Client types matching Valid's verticals (valid.co: health & fitness, home
-# services, DTC, consumer apps). Categories are Overture keys; each must exist
+# Brand types for common consumer verticals (health & fitness, home services,
+# DTC, consumer apps). Categories are Overture keys; each must exist
 # in the data (checked at startup).
 PRESETS: dict[str, Preset] = {
     p.key: p

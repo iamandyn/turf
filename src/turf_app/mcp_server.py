@@ -1,9 +1,9 @@
 """Turf as MCP tools, so AI agents can find markets the way the web page does.
 
 Mounted inside the API at /mcp (streamable HTTP, stateless, JSON responses),
-so it shares the read-only database, rate limiting, and deploys. Valid gives
-each client an MCP server to query their account in plain English; this is the
-same shape for market selection: an agent can ask "where else looks like our
+so it shares the read-only database, rate limiting, and deploys. Marketing
+teams increasingly query their ad accounts through AI agents in plain English;
+this gives those agents market selection: an agent can ask "where else looks like our
 best markets for a pet-care app?" and get ranked metros with reasons, ZIP
 codes, and briefs.
 

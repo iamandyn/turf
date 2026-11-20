@@ -209,7 +209,7 @@ Built by `create_app(db_path=None, rate_limiter=None, state_dir=None, platform_f
 
 At least one signal is required (categories or growth).
 
-**Presets** (`PRESETS`, matching Valid's verticals): pets, fitness, home services, beauty & wellness, young professionals, families. Each is 5–7 Overture categories.
+**Presets** (`PRESETS`, matching common consumer-brand verticals): pets, fitness, home services, beauty & wellness, young professionals, families. Each is 5–7 Overture categories.
 
 **Algorithm:**
 1. **Universe:** metros of the chosen kinds with at least `min_population` people, **plus the seeds** whatever their size. Fewer than 10 is a 422 ("lower the minimum population").

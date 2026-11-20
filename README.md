@@ -8,7 +8,7 @@
 
 ## What it does
 
-An agency like Valid holds ad results for every client, by location. Turf turns those results into a report a strategist can hand to the client:
+Performance-marketing agencies and in-house growth teams hold a brand's ad results by location. Turf turns those results into a report a strategist can hand to the brand:
 
 1. **Where to focus next:** the metro areas that look most like the brand's best markets, where it spends little or nothing today. Each comes with an **expected result** taken from the brand's own most similar markets ("expected CPA about $27, from Cleveland, Portland and Columbus") and a plain-language snapshot of the area.
 2. **How much to trust it:** whether the patterns behind the recommendations actually predicted this brand's results (high, medium or low confidence, with the numbers).
@@ -32,9 +32,9 @@ The live site opens with a short notice saying the same thing:
 ## Why this
 
 <!-- Draft: rewrite in your own words. -->
-Valid's clients are national consumer brands (subscription apps, DTC, health and fitness, home services) buying Meta, TikTok and Google by geography. A recurring question is *where should the budget go next?* Valid already has the best possible input to answer it: each client's results by market. Overture adds what those results can't show on their own, a description of every US metro by the local businesses in it. Turf finds the metros that look like a brand's best markets, and checks whether that resemblance has actually predicted the brand's results before recommending anything.
+National consumer brands without storefronts (subscription apps, DTC, health and fitness, home services) buy Meta, TikTok and Google ads by geography. A recurring question is *where should the budget go next?* Whoever runs their ads, an agency or an in-house team, already holds the best possible input to answer it: the brand's own results by market. Overture adds what those results can't show on their own, a description of every US metro by the local businesses in it. Turf finds the metros that look like a brand's best markets, and checks whether that resemblance has actually predicted the brand's results before recommending anything.
 
-I got here in steps. The first version was a geo-conquesting tool (ads around competitors' stores), which suits businesses with storefronts, and almost none of Valid's clients have them. A second version was a configurable market explorer with too many controls. This one does one thing: brand data in, report out.
+I got here in steps. The first version was a geo-conquesting tool (ads around competitors' stores), which suits businesses with storefronts, and the brands that buy ads this way mostly don't have any. A second version was a configurable market explorer with too many controls. This one does one thing: brand data in, report out.
 
 ## Decisions and trade-offs
 
@@ -59,9 +59,9 @@ I got here in steps. The first version was a geo-conquesting tool (ads around co
 **Engineering:**
 - **Precompute offline, serve aggregates.** The served database is 5.5 MB of per-metro counts built from 18 million places. A full report takes about 0.15 s, including the 999-shuffle check.
 - **An ad-account connector, against a simulated platform.** There's no real ad account to connect, so the app includes a stand-in ad platform (`/mock/ads`, an insights API shaped like Meta's) that misbehaves the way real ones do: it refuses requests with 429s and `Retry-After`, has transient 503s, expires tokens, pages with opaque cursors, and keeps adding conversions to the last three days. The connector handles each: token refresh, retries with backoff, idempotent upserts keyed by day and market, incremental syncs that re-fetch a lookback window, and a report recomputed and compared with the previous one ("Raleigh moved from #6 to #3"). Jobs run in the background, their progress streams to the page over server-sent events, and their state lives in SQLite so either of the two workers can serve it. It costs nothing to run: no API keys, no external calls.
-- **MCP server in the same app.** Valid gives each client an MCP server to query its account in plain English. Turf's analysis is available the same way at `/mcp`, including `recommend_from_results` for an agent holding a brand's ad report.
+- **MCP server in the same app.** Marketing teams increasingly work through AI agents that query their ad accounts in plain English. Turf's analysis is available to them at `/mcp`, including `recommend_from_results` for an agent holding a brand's ad report.
 - **No-build frontend.** Plain JavaScript and MapLibre, served by the same container. Light and dark themes, a print layout, axe-checked for accessibility.
-- **CI/CD:** every merge to `main` runs lint, strict typing and 145 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back on failure. CI then drives the live site in a real browser, with an accessibility check.
+- **CI/CD:** every merge to `main` runs lint, strict typing and 148 tests. It then builds an immutable Docker image and deploys it over SSH with a key that can *only* run `deploy <sha>`. The server health-checks the new version and rolls back on failure. CI then drives the live site in a real browser, with an accessibility check.
 
 ![The live sync: a simulated ad account synced a week later. The panel lists what changed in the report (CPA over the last 28 days, metros that entered, moved or left the top 10), and the sync log shows each page with new and updated rows](documents/img/turf-live-sync.png)
 

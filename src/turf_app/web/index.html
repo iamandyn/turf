@@ -74,41 +74,21 @@
         <section class="r-section" aria-labelledby="trust-title">
           <h3 id="trust-title">How much to trust this</h3>
           <p class="verdict"><span class="badge" id="verdict-badge"></span> <span id="verdict-text"></span></p>
-          <p class="r-note" id="verdict-detail"></p>
+          <details class="more">
+            <summary>The numbers behind this</summary>
+            <p class="r-note" id="verdict-detail"></p>
+          </details>
         </section>
 
         <section class="r-section" aria-labelledby="drivers-title">
           <h3 id="drivers-title">What drives this brand's results</h3>
           <ul class="drivers" id="drivers"></ul>
-          <ul class="bars rho" id="signal-bars" aria-label="How each signal tracks results"></ul>
-          <p class="r-note">Each bar is a rank correlation across the brand's markets: to the right, more of that kind of business goes with better results.</p>
-        </section>
-
-        <section class="r-section" aria-labelledby="today-title">
-          <h3 id="today-title">This brand's markets today</h3>
-          <div class="today-grid">
-            <div><h4>Performing best</h4><ol class="mini" id="today-best"></ol></div>
-            <div><h4>Performing worst</h4><ol class="mini" id="today-worst"></ol></div>
-          </div>
-          <details class="brand-table">
-            <summary id="all-markets-title">All markets in the data</summary>
-            <table>
-              <thead><tr><th scope="col">Metro</th><th scope="col" class="num-col">Spend</th><th scope="col" class="num-col" id="kpi-col">KPI</th></tr></thead>
-              <tbody id="all-markets"></tbody>
-            </table>
+          <details class="more">
+            <summary>How each signal tracks results</summary>
+            <ul class="bars rho" id="signal-bars" aria-label="How each signal tracks results"></ul>
+            <p class="r-note">Each bar is a rank correlation across the brand's markets: to the right, more of that kind of business goes with better results.</p>
           </details>
-        </section>
-
-        <section class="r-section" aria-labelledby="method-title">
-          <h3 id="method-title">How this report was made</h3>
-          <ol class="method">
-            <li>The brand's results were matched to US metro areas (<span id="method-matched"></span>).</li>
-            <li>Its best markets were picked by <span id="method-kpi"></span>, among metros with at least 1% of spend.</li>
-            <li>Every metro was described by its mix of local businesses (Overture Maps) and population (US Census). The kinds of business used for <span id="method-category"></span> are listed above.</li>
-            <li>Turf checked whether those patterns predict the brand's results in markets they weren't fitted on, against 999 shuffled versions of the same data.</li>
-            <li>The recommendations are the metros that look most like the best markets, where the brand spends little or nothing. Expected results come from the brand's most similar existing markets.</li>
-          </ol>
-          <details class="adjust">
+          <details class="adjust more">
             <summary>Adjust the signals</summary>
             <p class="small muted">Add or remove the kinds of local business Turf compares. The report updates.</p>
             <ul class="chips" id="signal-chips"></ul>
@@ -121,6 +101,32 @@
             </div>
           </details>
         </section>
+
+        <details class="r-section fold" id="today-fold">
+          <summary><h3 id="today-title">This brand's markets today</h3></summary>
+          <div class="today-grid">
+            <div><h4>Performing best</h4><ol class="mini" id="today-best"></ol></div>
+            <div><h4>Performing worst</h4><ol class="mini" id="today-worst"></ol></div>
+          </div>
+          <details class="brand-table">
+            <summary id="all-markets-title">All markets in the data</summary>
+            <table>
+              <thead><tr><th scope="col">Metro</th><th scope="col" class="num-col">Spend</th><th scope="col" class="num-col" id="kpi-col">KPI</th></tr></thead>
+              <tbody id="all-markets"></tbody>
+            </table>
+          </details>
+        </details>
+
+        <details class="r-section fold" id="method-fold">
+          <summary><h3 id="method-title">How this report was made</h3></summary>
+          <ol class="method">
+            <li>The brand's results were matched to US metro areas (<span id="method-matched"></span>).</li>
+            <li>Its best markets were picked by <span id="method-kpi"></span>, among metros with at least 1% of spend.</li>
+            <li>Every metro was described by its mix of local businesses (Overture Maps) and population (US Census). The kinds of business used for <span id="method-category"></span> are listed above.</li>
+            <li>Turf checked whether those patterns predict the brand's results in markets they weren't fitted on, against 999 shuffled versions of the same data.</li>
+            <li>The recommendations are the metros that look most like the best markets, where the brand spends little or nothing. Expected results come from the brand's most similar existing markets.</li>
+          </ol>
+        </details>
 
         <footer class="foot">
           <p>Data: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps Foundation</a> places, release <span id="release">…</span>; US Census Bureau metro areas and population estimates.

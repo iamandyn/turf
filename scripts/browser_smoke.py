@@ -82,7 +82,7 @@ def main() -> None:
         first = page.locator(".rec >> nth=0")
         check(
             n_recs == 5
-            and "Expected" in first.inner_text()
+            and "expected" in first.inner_text().lower()
             and "not running yet" in first.inner_text()
             and "confidence" in badge
             and page.locator("#synthetic-note").is_visible()
@@ -169,7 +169,7 @@ def main() -> None:
         upload.select_option("#category", "fitness")
         upload.click("#build-report")
         wait_report(upload)
-        method = upload.inner_text("#method-matched")
+        method = upload.text_content("#method-matched") or ""  # in a collapsed section
         check(
             "13 rows by market" in summary and "ROAS" in summary
             and f"{len(UPLOAD_MARKETS)} of {len(UPLOAD_MARKETS) + 1} rows" in method

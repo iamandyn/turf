@@ -354,6 +354,7 @@ function renderReport() {
   tbody.innerHTML = "";
   for (const m of r.metros) {
     const tr = document.createElement("tr");
+    tr.dataset.code = m.metro_code;
     if (!m.trusted) tr.className = "muted";
     [m.name + (m.best ? " ★" : ""), money.format(m.spend), m.trusted ? kpiValue(k, m.kpi) : "too little spend"].forEach((text, i) => {
       const td = document.createElement("td");
@@ -418,18 +419,45 @@ function recCard(rec, d) {
 
   const summary = document.createElement("div");
   summary.className = "rec-summary";
-  const expected = document.createElement("p");
-  expected.className = "expected";
+  const stats = document.createElement("div");
+  stats.className = "rec-stats";
   if (d.expected_kpi !== null) {
-    const strong = document.createElement("strong");
-    strong.textContent = `Expected ${kpiName(k)} about ${kpiValue(k, d.expected_kpi)}`;
-    expected.append(strong, document.createTextNode(
-      ` (${kpiValue(k, d.expected_range[0])} to ${kpiValue(k, d.expected_range[1])}), from the brand's most similar markets: ${d.similar.map((m) => short(m.name)).join(", ")}.`));
+    stats.append(stat(
+      `Expected ${kpiName(k)}`,
+      kpiValue(k, d.expected_kpi),
+      `${kpiValue(k, d.expected_range[0])}–${kpiValue(k, d.expected_range[1])}`,
+      "headline",
+    ));
   }
-  const snap = document.createElement("p");
-  snap.className = "snapshot";
-  snap.textContent = d.snapshot;
-  summary.append(expected, snap);
+  const g = rec.growth_pct;
+  stats.append(stat("People", compact.format(rec.population), `${g >= 0 ? "+" : ""}${g.toFixed(1)}% since 2020`));
+  summary.append(stats);
+  if (d.similar.length) {
+    const like = document.createElement("p");
+    like.className = "rec-like";
+    like.textContent = `Like ${d.similar.map((m) => short(m.name)).join(", ")}`;
+    like.title = "The brand's most similar existing markets, which the expected result comes from";
+    summary.append(like);
+  }
+  // The kinds of business most over- and under-represented, as in the snapshot.
+  const reasons = rec.reasons.filter((x) => x.signal !== "population_growth");
+  const notable = [
+    ...reasons.filter((x) => x.ratio >= 1.2).slice(0, 3),
+    ...reasons.filter((x) => x.ratio < 0.7).slice(0, 1),
+  ];
+  if (notable.length) {
+    const chips = document.createElement("ul");
+    chips.className = "rec-chips";
+    chips.setAttribute("aria-label", "Local businesses vs. the typical metro");
+    for (const x of notable) {
+      const c = document.createElement("li");
+      c.className = x.ratio >= 1 ? "up" : "down";
+      c.textContent = `${x.label} ${x.ratio >= 10 ? Math.round(x.ratio) : x.ratio.toFixed(1)}×`;
+      c.title = `${x.value}% of local businesses vs ${x.typical}% in the typical metro`;
+      chips.append(c);
+    }
+    summary.append(chips);
+  }
 
   const body = document.createElement("div");
   body.className = "rec-body";
@@ -439,6 +467,22 @@ function recCard(rec, d) {
   head.addEventListener("click", () => selectRec(rec.metro_code, { toggle: true }));
   li.append(head, summary, body);
   return li;
+}
+
+function stat(label, value, sub, cls = "") {
+  const box = document.createElement("div");
+  box.className = `stat ${cls}`.trim();
+  const l = document.createElement("span");
+  l.className = "stat-label";
+  l.textContent = label;
+  const v = document.createElement("span");
+  v.className = "stat-value";
+  v.textContent = value;
+  const s = document.createElement("span");
+  s.className = "stat-sub";
+  s.textContent = sub;
+  box.append(l, v, s);
+  return box;
 }
 
 function recDetails(rec, d) {
@@ -512,6 +556,7 @@ async function loadBrief(code, box) {
 
 function selectRec(code, { toggle = false, scroll = true } = {}) {
   const card = document.querySelector(`.rec[data-code="${code}"]`);
+  clearMarketHighlight();
   const already = state.selected === code;
   state.selected = toggle && already ? null : code;
   document.querySelectorAll(".rec").forEach((li) => {
@@ -701,23 +746,33 @@ darkQuery.addEventListener("change", () => {
 
 // ---------- Map ----------
 
+// The data covers the 50 states (no territories). Open on the lower 48; let the
+// map pan as far as Alaska and Hawaii but no further. The west edge stays off
+// -180: with renderWorldCopies off, MapLibre 4.7 wraps it and pins the view to it.
+// The south edge leaves room to center the lower 48 in a tall, narrow map.
+const LOWER_48 = [[-125, 24.3], [-66.9, 49.5]];
+const US_LIMITS = [[-179, 5], [-55, 72]];
+const usView = { padding: 24 };
+
 const map = new maplibregl.Map({
   container: "map",
   style: MAP_STYLES[mapTheme],
-  center: [-97, 38.5],
-  zoom: 3.4,
+  bounds: LOWER_48,
+  fitBoundsOptions: usView,
+  maxBounds: US_LIMITS,
+  renderWorldCopies: false,
   attributionControl: { compact: true },
 });
 map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 const mapReady = new Promise((resolve) => map.on("load", resolve));
 
-function toFeatures(rows) {
+function toFeatures(rows, kind = "rec") {
   return {
     type: "FeatureCollection",
     features: rows.map((r) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: r.center },
-      properties: { metro_code: r.metro_code, name: r.name, population: r.population || 400000 },
+      properties: { metro_code: r.metro_code, name: r.name, population: r.population || 400000, kind },
     })),
   };
 }
@@ -729,29 +784,99 @@ async function setupLayers() {
   await mapReady;
   const empty = { type: "FeatureCollection", features: [] };
   for (const id of OUR_SOURCES) map.addSource(id, { type: "geojson", data: empty });
+  // The brand's other markets: context, kept quieter than the recommendations.
   map.addLayer({ id: "current-circle", type: "circle", source: "current",
-    paint: { "circle-radius": 6, "circle-color": "#ffffff", "circle-opacity": 0.9, "circle-stroke-color": "#9aa0a6", "circle-stroke-width": 1.5 } });
+    paint: { "circle-radius": 4.5, "circle-color": "#ffffff", "circle-opacity": 0.75, "circle-stroke-color": "#9aa0a6", "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.8 } });
   map.addLayer({ id: "seeds-circle", type: "circle", source: "seeds",
     paint: { "circle-radius": 8, "circle-color": "#2e6fe4", "circle-opacity": 0.85, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 } });
   map.addLayer({ id: "results-circle", type: "circle", source: "results",
     paint: { "circle-radius": sizeByPopulation, "circle-color": "#e4572e", "circle-opacity": 0.8, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 } });
   map.addLayer({ id: "selected-ring", type: "circle", source: "selected",
-    paint: { "circle-radius": ["+", sizeByPopulation, 4], "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#1d1d1f", "circle-stroke-width": 2.5 } });
+    paint: {
+      "circle-radius": ["match", ["get", "kind"], "rec", ["+", sizeByPopulation, 4], "best", 12, 9],
+      "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#1d1d1f", "circle-stroke-width": 2.5,
+    } });
   applyLayerTheme();
   map.on("click", "results-circle", (e) => {
     const code = e.features[0].properties.metro_code;
     if (!state.showAll && !document.querySelector(`.rec[data-code="${code}"]`)) { state.showAll = true; renderReport(); }
     selectRec(code);
   });
+  for (const layer of ["seeds-circle", "current-circle"]) {
+    map.on("click", layer, (e) => {
+      showPopup(e.features[0]);  // touch screens have no hover
+      selectMarket(e.features[0].properties.metro_code);
+    });
+  }
+  // Moving straight from one layer's dot to another's fires the new layer's
+  // mouseenter before the old one's mouseleave, so a layer only closes its own popup.
+  let hovered = null;
   for (const layer of ["results-circle", "seeds-circle", "current-circle"]) {
     map.on("mouseenter", layer, (e) => {
+      hovered = layer;
       map.getCanvas().style.cursor = "pointer";
-      popup.setLngLat(e.features[0].geometry.coordinates).setText(e.features[0].properties.name).addTo(map);
+      showPopup(e.features[0]);
     });
-    map.on("mouseleave", layer, () => { map.getCanvas().style.cursor = ""; popup.remove(); });
+    map.on("mouseleave", layer, () => {
+      if (hovered !== layer) return;
+      hovered = null;
+      map.getCanvas().style.cursor = "";
+      popup.remove();
+    });
   }
 }
 const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10 });
+
+// A dot's popup: the metro and what the report says about it.
+function showPopup(feature) {
+  const { metro_code: code, name, kind } = feature.properties;
+  const k = report.kpi;
+  const lines = [];
+  if (kind === "rec") {
+    const i = report.recommendations.results.findIndex((x) => x.metro_code === code);
+    const d = report.details[i];
+    lines.push(`Recommended #${i + 1}`);
+    if (d?.expected_kpi != null) lines.push(`Expected ${kpiName(k)} about ${kpiValue(k, d.expected_kpi)}`);
+  } else {
+    const m = report.metros.find((x) => x.metro_code === code);
+    lines.push(m.best ? "Best today" : "Running now");
+    lines.push(m.trusted
+      ? `${kpiValue(k, m.kpi)} ${kpiName(k)} · ${money.format(m.spend)} spend`
+      : `${money.format(m.spend)} spend, too little to measure`);
+  }
+  const box = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = name;
+  box.append(title);
+  for (const text of lines) {
+    const line = document.createElement("span");
+    line.className = "popup-line";
+    line.textContent = text;
+    box.append(line);
+  }
+  popup.setLngLat(feature.geometry.coordinates).setDOMContent(box).addTo(map);
+}
+
+// One of the brand's existing markets: ring it and show its row in the report.
+function selectMarket(code) {
+  if (state.selected) selectRec(state.selected, { toggle: true });
+  const m = report.metros.find((x) => x.metro_code === code);
+  if (!m) return;
+  map.getSource("selected").setData(toFeatures([m], m.best ? "best" : "current"));
+  $("today-fold").open = true;
+  document.querySelector(".brand-table").open = true;
+  let row = null;
+  document.querySelectorAll("#all-markets tr").forEach((tr) => {
+    const hit = tr.dataset.code === code;
+    tr.classList.toggle("highlight", hit);
+    if (hit) row = tr;
+  });
+  row?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function clearMarketHighlight() {
+  document.querySelectorAll("#all-markets tr.highlight").forEach((tr) => tr.classList.remove("highlight"));
+}
 
 async function drawMap({ fit = false } = {}) {
   await mapReady;
@@ -759,8 +884,8 @@ async function drawMap({ fit = false } = {}) {
   const best = report.metros.filter((m) => m.best);
   const current = report.metros.filter((m) => !m.best);
   map.getSource("results").setData(toFeatures(recs));
-  map.getSource("seeds").setData(toFeatures(best));
-  map.getSource("current").setData(toFeatures(current));
+  map.getSource("seeds").setData(toFeatures(best, "best"));
+  map.getSource("current").setData(toFeatures(current, "current"));
   if (fit) {
     const bounds = new maplibregl.LngLatBounds();
     [...recs, ...best].forEach((r) => bounds.extend(r.center));
@@ -771,6 +896,7 @@ async function drawMap({ fit = false } = {}) {
 async function clearMap() {
   await mapReady;
   for (const id of OUR_SOURCES) map.getSource(id).setData(toFeatures([]));
+  map.fitBounds(LOWER_48, { ...usView, duration: 600 });
 }
 
 const LAYER_GROUPS = { results: ["results-circle"], seeds: ["seeds-circle"], current: ["current-circle"] };
